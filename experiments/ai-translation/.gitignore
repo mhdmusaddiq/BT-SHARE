@@ -1,0 +1,26 @@
+# Generated Flutter/Dart artifacts; secrets or recordings must never enter Git.
+.dart_tool/
+.packages
+.pub/
+.pub-cache/
+build/
+coverage/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.log
+*.pcm
+*.wav
+*.mp3
+*.m4a
+.env
+.env.*
+!.env.example
+local_secrets.*
+android/.gradle/
+android/local.properties
+android/key.properties
+android/captures/
+android/**/GeneratedPluginRegistrant.*
+android/**/flutter/
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh

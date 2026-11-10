@@ -1,0 +1,24 @@
+name: bt_share_ai_translation_poc
+description: MIC-only translation proof of concept for BT SHARE Member 3.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  record: ^7.1.2
+  permission_handler: ^13.0.2
+  flutter_tts: ^4.2.5
+  audioplayers: ^6.8.1
+  web_socket_channel: ^3.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
