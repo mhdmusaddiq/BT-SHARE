@@ -15,6 +15,7 @@ void main() {
       target: TranslationLanguage.english,
     );
     await provider.sendMicrophonePcm(Uint8List(48000));
+    await Future<void>.delayed(Duration.zero);
     expect(segments, hasLength(1));
     expect(segments.single.isMock, isTrue);
     expect(segments.single.original, contains('வணக்கம்'));
@@ -35,6 +36,7 @@ void main() {
       target: TranslationLanguage.tamil,
     );
     await provider.sendMicrophonePcm(Uint8List(48000));
+    await Future<void>.delayed(Duration.zero);
     expect(segments.single.original, contains('Hello'));
     expect(segments.single.translated, contains('வணக்கம்'));
     await subscription.cancel();
