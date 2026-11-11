@@ -2,7 +2,7 @@
 
 **Branch:** `Sihan-Member-3` · **Owner:** Member 3 · **Scope:** `experiments/ai-translation/**`
 
-This is a **proof of concept**, not a shipping app. The Dart and Android implementation sources are committed; generated Flutter toolchain and Android template files must be bootstrapped on a machine with Flutter/Android SDK. No Android build or hardware test has been completed in this authoring environment.
+This is a **proof of concept**, not a shipping app. The Dart and Android implementation sources are committed; generated Flutter toolchain and Android template files must be bootstrapped on a machine with Flutter/Android SDK. The user reported successfully building a debug APK and testing the MOCK application on Redmi Note 9 Pro for 03:56 with no errors. No live C2 AI-provider test has yet been observed; Flutter build and device tooling are unavailable inside the assistant runtime.
 
 ## Features and truth in UI
 
@@ -43,7 +43,7 @@ If an Android build reports unsupported `record`/permission/TTS platform API or 
 
 ## Real gateway mode
 
-**Server API contract proposed (not implemented in BT SHARE):**
+**Wire messages implemented by the experimental local gateway; production auth is NOT included:**
 
 Connect to `wss://...` using a short-lived, authenticated gateway session. Initial text JSON:
 ```json
@@ -62,7 +62,7 @@ Or error:
 {"type":"error","message":"Service not available"}
 ```
 
-This protocol is **provisional**: no central contract or other member module has been modified. Audio is sent ONLY after explicit MIC permission and translation start. Prefer binary audio frames, authenticated session refresh and server-side VAD before production. The gateway must reject MEDIA at the server and provide STT, translation, TTS, rate limits, authorization and consent/retention policies.
+This protocol is **provisional**: no central contract or other member module has been modified. Audio is sent ONLY after explicit MIC permission and translation start. Prefer binary audio frames, authenticated session refresh and server-side VAD before production. The gateway rejects MEDIA and includes a test-only token, basic rate bounds and cloud STT/translation/TTS. Production authentication, consent records, stronger limits and retention policies are still required.
 
 Local development example:
 ```powershell
