@@ -1,0 +1,12 @@
+.gradle/
+.gradle-user-home/
+.kotlin/
+.android-sdk/
+.android-user-home/
+local.properties
+**/build/
+*.iml
+.idea/
+captures/
+*.apk
+*.aab
