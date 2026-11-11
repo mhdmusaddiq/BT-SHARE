@@ -55,11 +55,25 @@ void main() {
       voice: TestVoice(),
     );
     await tester.pumpWidget(BtShareTranslationApp(controller: c));
-    await tester.tap(find.text('Start Translation'));
+
+    // Flutter widget tests use an 800x600 viewport by default.
+    // This button is inside a scrollable session card below the fold.
+    // Ensure it is actually visible before simulating a user tap.
+    final startButton = find.text('Start Translation');
+    await tester.ensureVisible(startButton);
+    await tester.pump();
+    await tester.tap(startButton);
+
+    // Drain the controller's asynchronous permission/provider start.
+    // Avoid pumpAndSettle() while the session has a periodic elapsed timer.
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 60));
-    expect(find.text('Stop Translation'), findsOneWidget);
-    await tester.tap(find.text('Stop Translation'));
+
+    final stopButton = find.text('Stop Translation');
+    expect(stopButton, findsOneWidget);
+    await tester.ensureVisible(stopButton);
+    await tester.pump();
+    await tester.tap(stopButton);
     await tester.pump();
     await tester.pumpWidget(const SizedBox());
   });

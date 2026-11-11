@@ -5,7 +5,6 @@ import '../translation/models.dart';
 import '../translation/session_controller.dart';
 
 const _violet = Color(0xFF6455E8);
-const _ink = Color(0xFF121B2A);
 const _muted = Color(0xFF697587);
 
 class TranslationHome extends StatefulWidget {

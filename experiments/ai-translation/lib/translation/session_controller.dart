@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
@@ -12,16 +11,14 @@ typedef ProviderFactory = TranslationProvider Function();
 
 class TranslationSessionController extends ChangeNotifier {
   TranslationSessionController({
-    required MicrophoneInput microphone,
-    required ProviderFactory providerFactory,
-    required TranslatedVoiceOutput voice,
-  })  : _microphone = microphone,
-        _providerFactory = providerFactory,
-        _voice = voice;
+    required this.microphone,
+    required this.providerFactory,
+    required this.voice,
+  });
 
-  final MicrophoneInput _microphone;
-  final ProviderFactory _providerFactory;
-  final TranslatedVoiceOutput _voice;
+  final MicrophoneInput microphone;
+  final ProviderFactory providerFactory;
+  final TranslatedVoiceOutput voice;
 
   TranslationLanguage source = TranslationLanguage.tamil;
   TranslationLanguage target = TranslationLanguage.english;
@@ -52,7 +49,7 @@ class TranslationSessionController extends ChangeNotifier {
   Timer? _pulse;
   int _generation = 0;
   bool _disposed = false;
-  bool _microphoneStarted = false;
+  bool microphoneStarted = false;
   bool _starting = false;
 
   bool get active =>
@@ -102,7 +99,7 @@ class TranslationSessionController extends ChangeNotifier {
 
   void setVoiceEnabled(bool enabled) {
     voiceEnabled = enabled;
-    if (!enabled) unawaited(_voice.stop());
+    if (!enabled) unawaited(voice.stop());
     _notify();
   }
 
@@ -130,7 +127,7 @@ class TranslationSessionController extends ChangeNotifier {
     _notify();
 
     try {
-      final authorized = await _microphone.requestPermission();
+      final authorized = await microphone.requestPermission();
       if (!_current(run)) return;
       if (!authorized) {
         status = AiSessionStatus.permissionDenied;
@@ -139,7 +136,7 @@ class TranslationSessionController extends ChangeNotifier {
         return;
       }
 
-      final provider = _providerFactory();
+      final provider = providerFactory();
       _provider = provider;
       mockMode = provider.isMock;
       _segmentSubscription = provider.segments.listen(
@@ -157,7 +154,9 @@ class TranslationSessionController extends ChangeNotifier {
           _notify();
         },
         onError: (Object e) {
-          if (_current(run)) unawaited(_fail(run, 'AI service unavailable.'));
+          if (_current(run)) {
+            unawaited(_fail(run, 'AI service unavailable.'));
+          }
         },
       );
       await provider.connect(source: source, target: target);
@@ -165,12 +164,12 @@ class TranslationSessionController extends ChangeNotifier {
 
       // Only start capturing AFTER the AI gateway is available. The local
       // room's own audio path remains separate and is never modified here.
-      final input = await _microphone.startPcm16();
+      final input = await microphone.startPcm16();
       if (!_current(run)) {
-        await _microphone.stop();
+        await microphone.stop();
         return;
       }
-      _microphoneStarted = true;
+      microphoneStarted = true;
       startedAt = DateTime.now();
       status = AiSessionStatus.listening;
       _pulse = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -187,7 +186,9 @@ class TranslationSessionController extends ChangeNotifier {
           }));
         },
         onError: (Object e) {
-          if (_current(run)) unawaited(_fail(run, 'Microphone capture failed.'));
+          if (_current(run)) {
+            unawaited(_fail(run, 'Microphone capture failed.'));
+          }
         },
         onDone: () {
           if (_current(run) && active) {
@@ -212,10 +213,10 @@ class TranslationSessionController extends ChangeNotifier {
     _pulse = null;
     await _micSubscription?.cancel();
     _micSubscription = null;
-    if (_microphoneStarted) {
-      _microphoneStarted = false;
+    if (microphoneStarted) {
+      microphoneStarted = false;
       try {
-        await _microphone.stop();
+        await microphone.stop();
       } on Object {
         // Best-effort cleanup, preserve the primary session error.
       }
@@ -229,7 +230,7 @@ class TranslationSessionController extends ChangeNotifier {
     } on Object {
       // Best-effort cleanup.
     }
-    await _voice.stop();
+    await voice.stop();
   }
 
   Future<void> _fail(int run, String message) async {
@@ -260,7 +261,7 @@ class TranslationSessionController extends ChangeNotifier {
     if (!voiceEnabled) return;
     try {
       playbackError = null;
-      await _voice.play(segment, target);
+      await voice.play(segment, target);
     } on Object {
       playbackError = segment.isMock
           ? 'Device text-to-speech is not available for this language.'
@@ -269,15 +270,15 @@ class TranslationSessionController extends ChangeNotifier {
     }
   }
 
-  Future<void> stopPlayback() => _voice.stop();
+  Future<void> stopPlayback() => voice.stop();
 
   @override
   void dispose() {
     _disposed = true;
     ++_generation;
     _pulse?.cancel();
-    unawaited(_cleanup().then((_) => _microphone.dispose()).then(
-          (_) => _voice.dispose(),
+    unawaited(_cleanup().then((_) => microphone.dispose()).then(
+          (_) => voice.dispose(),
         ));
     super.dispose();
   }
