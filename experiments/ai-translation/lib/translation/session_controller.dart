@@ -49,7 +49,7 @@ class TranslationSessionController extends ChangeNotifier {
   Timer? _pulse;
   int _generation = 0;
   bool _disposed = false;
-  bool microphoneStarted = false;
+  bool _microphoneStarted = false;
   bool _starting = false;
 
   bool get active =>
@@ -169,7 +169,7 @@ class TranslationSessionController extends ChangeNotifier {
         await microphone.stop();
         return;
       }
-      microphoneStarted = true;
+      _microphoneStarted = true;
       startedAt = DateTime.now();
       status = AiSessionStatus.listening;
       _pulse = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -213,8 +213,8 @@ class TranslationSessionController extends ChangeNotifier {
     _pulse = null;
     await _micSubscription?.cancel();
     _micSubscription = null;
-    if (microphoneStarted) {
-      microphoneStarted = false;
+    if (_microphoneStarted) {
+      _microphoneStarted = false;
       try {
         await microphone.stop();
       } on Object {
