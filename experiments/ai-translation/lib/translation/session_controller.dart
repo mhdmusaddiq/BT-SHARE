@@ -33,6 +33,7 @@ class TranslationSessionController extends ChangeNotifier {
   bool voiceEnabled = true;
   bool captionsEnabled = true;
   bool autoSpeak = false;
+  bool cloudConsentGiven = false;
   bool mockMode;
   String? errorMessage;
   String? playbackError;
@@ -109,6 +110,12 @@ class TranslationSessionController extends ChangeNotifier {
     _notify();
   }
 
+  void setCloudConsentGiven(bool enabled) {
+    if (active) return;
+    cloudConsentGiven = enabled;
+    _notify();
+  }
+
   void setCaptionsEnabled(bool enabled) {
     captionsEnabled = enabled;
     _notify();
@@ -116,6 +123,11 @@ class TranslationSessionController extends ChangeNotifier {
 
   Future<void> start() async {
     if (_disposed || active || _starting) return;
+    if (!mockMode && !cloudConsentGiven) {
+      errorMessage = 'Cloud microphone consent is required.';
+      _notify();
+      return;
+    }
     _starting = true;
     final run = ++_generation;
     _segments.clear();
@@ -176,7 +188,9 @@ class TranslationSessionController extends ChangeNotifier {
         },
         onError: (Object e) {
           if (_current(run)) {
-            unawaited(_fail(run, 'AI service unavailable.'));
+            unawaited(_fail(run,
+              e is TranslationProviderFailure ? e.message : 'AI service unavailable.'));
+
           }
         },
       );

@@ -118,3 +118,55 @@ Evidence C0–C5 lives at `../../evidence/ai-translation/`. All are **NOT_RUN_PH
 ## Contribution policy
 
 Work only on `Sihan-Member-3` and these two owned paths. Verify active branch and diff; never push to `development` or `main`; do not open/merge a PR without explicit request. Real integration must be reviewed by central coordinator.
+
+
+## C2: Test real Tamil/English speech with a local Python gateway
+
+The new gateway/ server uses three billable API calls per utterance:
+gpt-transcribe -> gpt-4.1-mini -> gpt-4o-mini-tts. This is segmented
+near-live output, not gpt-realtime-translate (no Tamil output). Device
+audio and transcripts are not saved by the POC.
+
+From the Flutter project directory, PowerShell:
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r gateway\requirements.txt
+.\.venv\Scripts\python.exe -m pytest gateway -q
+$env:OPENAI_API_KEY = Read-Host "OpenAI API key (keep private)"
+$env:BT_DEV_GATEWAY_TOKEN = Read-Host "Set a temporary dev gateway token"
+.\.venv\Scripts\python.exe -m uvicorn gateway.app:app --host 0.0.0.0 --port 8098
+```
+
+Use the SAME trusted private Wi-Fi on PC and Android. Obtain PC LAN IP
+from ipconfig. In a second terminal, create local_gateway.json in
+experiments/ai-translation/ (Git-ignored):
+```json
+{
+  "BT_AI_PROVIDER":"gateway",
+  "BT_AI_WS_URL":"ws://192.168.1.20:8098/v1/stream",
+  "BT_AI_ALLOW_INSECURE_DEV_LAN":"true",
+  "BT_AI_SESSION_TOKEN":"MATCH_THE_TEMP_TEST_TOKEN"
+}
+```
+Replace 192.168.1.20 with the actual PC IPv4; 127.0.0.1 on the phone
+means the phone itself and will not reach the PC. The mobile dev token
+is NOT secure for production, so do not distribute this APK. Allow
+port 8098 only on a private LAN, never the public Internet.
+
+Run local manifest update **only for debug builds**:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\enable_debug_lan_ws.ps1
+flutter run -d f7d152a --dart-define-from-file=local_gateway.json
+```
+Consent to cloud mic processing in the app before pressing Start.
+Speak a clear sentence and pause at least 0.5s to trigger a chunk.
+Try both directions. Use headphones to prevent feedback. If the
+upstream API key/quota/model access fails the app should report
+AI unavailable independently from local room status. MOCK remains:
+```powershell
+flutter run -d f7d152a --dart-define=BT_AI_PROVIDER=mock
+```
+
+TTS and accuracy in Tamil MUST be reviewed on-device: server processing
+milliseconds exclude microphone buffering and network. No cloud AI
+calls, mobile builds or physical C2 observations were executed here.

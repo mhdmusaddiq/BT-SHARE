@@ -24,3 +24,7 @@ android/**/GeneratedPluginRegistrant.*
 android/**/flutter/
 ios/Flutter/Generated.xcconfig
 ios/Flutter/flutter_export_environment.sh
+
+# Local, insecure test-only credentials; never commit.
+local_gateway.json
+local_gateway.*.json

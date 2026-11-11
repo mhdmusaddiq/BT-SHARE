@@ -1,21 +1,31 @@
-# C0 Provider decision (provisional; no vendor selected)
+# C0 Provider decision — 2026-11-11
 
-The POC deliberately uses **MOCK** as the default. `GatewayTranslationProvider` is a replaceable WebSocket adapter, **not** a verified translation engine.
+**Selection for C2 POC:** a segmented MIC-only chain: gpt-transcribe
+(original text) -> gpt-4.1-mini (Tamil/English translation) ->
+gpt-4o-mini-tts (generated WAV audio). This is NOT simultaneous translation.
 
-## Candidate architectures to evaluate
+## Language constraint
+OpenAI gpt-realtime-translate has 13 OUTPUT languages and excludes Tamil;
+using it as the only Tamil voice provider would fail for English->Tamil.
+The text-to-speech API documents Tamil output among its supported languages.
+GPT-4o-mini-tts is deprecated with a Jan 6, 2027 shutdown announced,
+so replace the TTS leg before that date. Tamil ASR/voice quality remains
+unverified on a real provider.
 
-| Candidate | MIC stream | Tamil + English | Generated voice | Cost/latency evidence |
-|---|---|---|---|---|
-| Streaming audio-to-audio provider | Confirm per model/realtime API | Validate actual Tamil quality | Check supported output codecs | NOT_MEASURED |
-| Streaming ASR -> translator -> speech synthesis | Check continuous streaming support | Validate both directions with fixed utterance set | TTS should provide playable WAV/MP3 | NOT_MEASURED |
-| Self-hosted ASR + MT + TTS | Depends on deployment/models | Benchmarks required | Depends on installed TTS | NOT_MEASURED |
+Docs (viewed 2026-11-11):
+- https://developers.openai.com/cookbook/examples/voice_solutions/realtime_translation_guide
+- https://developers.openai.com/api/docs/guides/text-to-speech
+- https://developers.openai.com/api/docs/guides/speech-to-text
 
-**Recommendation:** choose **no production vendor yet**. Select provider after live C1–C4 tests with consent and reproducible tokenized billing. Model prices, privacy retention, translation quality, real-time latency, voice quality and regional availability have **not** been verified here.
+## Security and cost
+Only the server holds OPENAI_API_KEY. A separate temporary, shared
+BT_DEV_GATEWAY_TOKEN is a test-only private-LAN gate, NOT production user auth.
+Client dart-defines/JSON values are extractable; never put the vendor API key
+in Flutter. No secrets, PCM samples or transcripts are checked into Git.
+The three stages incur vendor charges; verify active billing and quotas.
+No live call or cost/latency measurement has been performed.
 
-## Required cost model for C0 follow-up
-
-Monthly cost = (source microphone minutes × speech recognition/streaming rate) + (translated characters/tokens × translation rate) + (synthesized characters/minutes × speech generation rate) + network/gateway storage/compute. Record sample rate, payload bitrate, real tokens, vendor billing region, free quotas and voice option at the **date of the experiment**; do not guess cost per minute.
-
-## Security
-
-Mobile client obtains ephemeral token from BT SHARE-owned authenticated backend. AI vendor secrets live server-side. Gateway enforces MIC-only semantics and consent, max minutes, token expiry and role authorization. Audio/log retention should be opt-in and minimal. `--dart-define` is **not a secure secret store** in shipped binaries.
+## Acceptance status
+C1 user-reported 03:56 MIC capture works in MOCK mode. C2 remains
+NOT_RUN_PHYSICAL until an authenticated provider call from a consented
+Android device returns BOTH accurate text and generated audio.

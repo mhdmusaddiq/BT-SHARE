@@ -8,7 +8,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'models.dart';
 import 'translation_provider.dart';
 
-/// BT SHARE MIC-only realtime gateway adapter. Credentials for the AI vendor
+/// BT SHARE MIC-only segmented translation adapter. Vendor credentials
 /// remain on the gateway server, never inside the Flutter application.
 class GatewayTranslationProvider implements TranslationProvider {
   GatewayTranslationProvider({
@@ -52,7 +52,7 @@ class GatewayTranslationProvider implements TranslationProvider {
         host == '10.0.2.2' ||
         host.startsWith('192.168.') ||
         host.startsWith('10.') ||
-        RegExp(r'^172\\.(1[6-9]|2[0-9]|3[01])\\.').hasMatch(host);
+        RegExp(r'^172\.(1[6-9]|2[0-9]|3[01])\.').hasMatch(host);
     final unsafeDevConnection =
         kDebugMode && allowInsecureDevLan && localDevelopment;
     if (endpoint.scheme != 'wss' &&
@@ -191,7 +191,11 @@ class GatewayTranslationProvider implements TranslationProvider {
     _connected = false;
     // A stop signal permits the backend to flush translated voice.
     if (_channel != null) {
-      _channel!.sink.add(jsonEncode({'type': 'stop'}));
+      try {
+        _channel!.sink.add(jsonEncode({'type': 'stop'}));
+      } on StateError {
+        // The connection may already be closed following a provider failure.
+      }
     }
     await _subscription?.cancel();
     await _channel?.sink.close();

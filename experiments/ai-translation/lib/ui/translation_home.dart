@@ -292,7 +292,7 @@ class _TranslationHomeState extends State<TranslationHome> {
               Expanded(child: _stat('SESSION', _elapsedLabel)),
               Expanded(
                 child: _stat(
-                  'AI LATENCY',
+                  'SERVER TIME',
                   controller.latestMeasuredLatencyMs == null
                       ? 'Not measured'
                       : '${controller.latestMeasuredLatencyMs} ms',
@@ -301,11 +301,27 @@ class _TranslationHomeState extends State<TranslationHome> {
             ],
           ),
           const SizedBox(height: 16),
+          if (!controller.mockMode)
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: const Text('I consent to cloud microphone processing'),
+              subtitle: const Text(
+                'Start uploads microphone speech to an AI provider for '
+                'transcription, translation and generated voice. No MEDIA capture.',
+              ),
+              value: controller.cloudConsentGiven,
+              onChanged: running
+                  ? null
+                  : (v) => controller.setCloudConsentGiven(v ?? false),
+            ),
           SizedBox(
             width: double.infinity,
             height: 52,
             child: FilledButton.icon(
-              onPressed: controller.status == AiSessionStatus.connecting
+              onPressed: controller.status == AiSessionStatus.connecting ||
+                      (!running && !controller.mockMode &&
+                          !controller.cloudConsentGiven)
                   ? null
                   : running
                       ? controller.stop
