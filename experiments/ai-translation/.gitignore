@@ -28,3 +28,8 @@ ios/Flutter/flutter_export_environment.sh
 # Local, insecure test-only credentials; never commit.
 local_gateway.json
 local_gateway.*.json
+
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
