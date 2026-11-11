@@ -127,6 +127,14 @@ class _TranslationHomeState extends State<TranslationHome> {
                 const SizedBox(height: 20),
                 if (controller.mockMode) _mockNotice(),
                 if (controller.mockMode) const SizedBox(height: 16),
+                if (!controller.mockMode) ...[
+                  const Text(
+                    'AI-generated translated voice · Not a human speaker. '
+                    'Use headphones to avoid microphone feedback.',
+                    style: TextStyle(color: _muted, fontSize: 12),
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 _languagePanel(),
                 const SizedBox(height: 16),
                 if (wide)

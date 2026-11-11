@@ -13,6 +13,10 @@ const providerChoice = String.fromEnvironment(
 );
 const gatewayUrl = String.fromEnvironment('BT_AI_WS_URL');
 const devSessionToken = String.fromEnvironment('BT_AI_SESSION_TOKEN');
+const allowInsecureDevLan = bool.fromEnvironment(
+  'BT_AI_ALLOW_INSECURE_DEV_LAN',
+  defaultValue: false,
+);
 
 TranslationProvider createTranslationProvider() {
   if (providerChoice == 'mock') return MockTranslationProvider();
@@ -25,6 +29,7 @@ TranslationProvider createTranslationProvider() {
     return GatewayTranslationProvider(
       endpoint: Uri.parse(gatewayUrl),
       ephemeralSessionToken: devSessionToken,
+      allowInsecureDevLan: allowInsecureDevLan,
     );
   }
   throw const TranslationProviderFailure('Unknown AI provider configuration.');
@@ -37,6 +42,7 @@ void main() {
       microphone: RecordMicrophoneInput(),
       providerFactory: createTranslationProvider,
       voice: DeviceTranslatedVoiceOutput(),
+      initialMockMode: providerChoice == 'mock',
     ),
   ));
 }

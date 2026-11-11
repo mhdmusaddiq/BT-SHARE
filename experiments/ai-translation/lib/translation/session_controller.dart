@@ -14,7 +14,8 @@ class TranslationSessionController extends ChangeNotifier {
     required this.microphone,
     required this.providerFactory,
     required this.voice,
-  });
+    bool initialMockMode = true,
+  }) : mockMode = initialMockMode;
 
   final MicrophoneInput microphone;
   final ProviderFactory providerFactory;
@@ -32,7 +33,7 @@ class TranslationSessionController extends ChangeNotifier {
   bool voiceEnabled = true;
   bool captionsEnabled = true;
   bool autoSpeak = false;
-  bool mockMode = true;
+  bool mockMode;
   String? errorMessage;
   String? playbackError;
   DateTime? startedAt;
@@ -142,11 +143,31 @@ class TranslationSessionController extends ChangeNotifier {
       _segmentSubscription = provider.segments.listen(
         (segment) {
           if (!_current(run)) return;
-          _segments.add(segment);
+          // Realtime deltas update one stable caption rather than adding
+          // hundreds of duplicate cards during a conversation.
+          final previousIndex = _segments.indexWhere((s) => s.id == segment.id);
+          TranslationSegment visible = segment;
+          if (previousIndex >= 0) {
+            final before = _segments[previousIndex];
+            visible = TranslationSegment(
+              id: segment.id,
+              original: segment.original,
+              translated: segment.translated,
+              receivedAt: segment.receivedAt,
+              isMock: segment.isMock,
+              measuredLatencyMs: segment.measuredLatencyMs,
+              voiceBytes: segment.voiceBytes ?? before.voiceBytes,
+              audioMimeType: segment.audioMimeType ?? before.audioMimeType,
+            );
+            _segments[previousIndex] = visible;
+          } else {
+            _segments.add(visible);
+          }
           status = AiSessionStatus.translating;
           errorMessage = null;
           _notify();
-          if (voiceEnabled && autoSpeak) {
+          if (voiceEnabled && autoSpeak &&
+              (segment.isMock || segment.voiceBytes != null)) {
             unawaited(playSegment(segment));
           }
           // A transcript is available; go back to receiving live MIC samples.

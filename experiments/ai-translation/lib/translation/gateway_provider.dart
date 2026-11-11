@@ -2,28 +2,31 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'models.dart';
 import 'translation_provider.dart';
 
-/// Illustrative BT SHARE gateway protocol. No real backend is included.
-/// A secure backend must validate auth, perform ASR/translation/TTS and return
-/// timestamped segments. Never ship a persistent AI API secret in a mobile app.
+/// BT SHARE MIC-only realtime gateway adapter. Credentials for the AI vendor
+/// remain on the gateway server, never inside the Flutter application.
 class GatewayTranslationProvider implements TranslationProvider {
   GatewayTranslationProvider({
     required this.endpoint,
     this.ephemeralSessionToken = '',
+    this.allowInsecureDevLan = false,
   });
 
   final Uri endpoint;
   final String ephemeralSessionToken;
+  final bool allowInsecureDevLan;
 
   final StreamController<TranslationSegment> _events =
       StreamController<TranslationSegment>.broadcast();
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
   bool _connected = false;
+  Completer<void>? _handshake;
   int _sequence = 0;
 
   @override
@@ -43,24 +46,33 @@ class GatewayTranslationProvider implements TranslationProvider {
     if (source == target) {
       throw const TranslationProviderFailure('Source and target must differ.');
     }
-    final localDevelopment = endpoint.host == 'localhost' ||
-        endpoint.host == '127.0.0.1' ||
-        endpoint.host == '10.0.2.2';
+    final host = endpoint.host;
+    final localDevelopment = host == 'localhost' ||
+        host == '127.0.0.1' ||
+        host == '10.0.2.2' ||
+        host.startsWith('192.168.') ||
+        host.startsWith('10.') ||
+        RegExp(r'^172\\.(1[6-9]|2[0-9]|3[01])\\.').hasMatch(host);
+    final unsafeDevConnection =
+        kDebugMode && allowInsecureDevLan && localDevelopment;
     if (endpoint.scheme != 'wss' &&
-        !(endpoint.scheme == 'ws' && localDevelopment)) {
+        !(endpoint.scheme == 'ws' && unsafeDevConnection)) {
       throw const TranslationProviderFailure(
-        'Use a secure wss:// endpoint (ws:// only for local development).',
+        'Use wss:// or explicitly enable debug-only private-LAN ws://.',
       );
     }
     try {
       final channel = WebSocketChannel.connect(endpoint);
       _channel = channel;
       await channel.ready.timeout(const Duration(seconds: 12));
-      _connected = true;
+      _handshake = Completer<void>();
       _subscription = channel.stream.listen(
         _onMessage,
         onError: (Object error, StackTrace stackTrace) {
           _connected = false;
+          if (_handshake case final waiter?) {
+            if (!waiter.isCompleted) waiter.completeError(error);
+          }
           if (!_events.isClosed) {
             _events.addError(
               const TranslationProviderFailure('AI gateway connection failed.'),
@@ -68,6 +80,13 @@ class GatewayTranslationProvider implements TranslationProvider {
           }
         },
         onDone: () {
+          if (_handshake case final waiter?) {
+            if (!waiter.isCompleted) {
+              waiter.completeError(
+                const TranslationProviderFailure('Gateway closed before ready.'),
+              );
+            }
+          }
           if (_connected && !_events.isClosed) {
             _events.addError(
               const TranslationProviderFailure('AI gateway disconnected.'),
@@ -88,6 +107,9 @@ class GatewayTranslationProvider implements TranslationProvider {
         if (ephemeralSessionToken.isNotEmpty)
           'ephemeral_session_token': ephemeralSessionToken,
       }));
+      // No microphone capture before authenticated AI session is ready.
+      await _handshake!.future.timeout(const Duration(seconds: 20));
+      _connected = true;
     } on Object catch (_) {
       _connected = false;
       throw const TranslationProviderFailure(
@@ -101,10 +123,23 @@ class GatewayTranslationProvider implements TranslationProvider {
       if (raw is! String) return;
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic>) return;
+      if (decoded['type'] == 'ready') {
+        if (decoded['source_mode'] != translationSourceMode) {
+          throw const TranslationProviderFailure('Invalid source mode.');
+        }
+        if (_handshake case final waiter?) {
+          if (!waiter.isCompleted) waiter.complete();
+        }
+        return;
+      }
       if (decoded['type'] == 'error') {
-        _events.addError(TranslationProviderFailure(
+        final reason = TranslationProviderFailure(
           (decoded['message'] as String?) ?? 'AI service error.',
-        ));
+        );
+        if (_handshake case final waiter?) {
+          if (!waiter.isCompleted) waiter.completeError(reason);
+        }
+        if (!_events.isClosed) _events.addError(reason);
         return;
       }
       if (decoded['type'] != 'segment') return;
@@ -138,18 +173,26 @@ class GatewayTranslationProvider implements TranslationProvider {
   @override
   Future<void> sendMicrophonePcm(Uint8List data) async {
     if (!_connected) return;
-    // Audio is transmitted to the configured endpoint only in gateway mode.
-    _channel?.sink.add(jsonEncode({
-      'type': 'audio',
-      'source_mode': translationSourceMode,
-      'sequence': ++_sequence,
-      'pcm16_base64': base64Encode(data),
-    }));
+    // Bound individual messages to the gateway's frame size.
+    for (var offset = 0; offset < data.length; offset += 32000) {
+      final end = (offset + 32000 < data.length) ? offset + 32000 : data.length;
+      final bytes = Uint8List.sublistView(data, offset, end);
+      _channel?.sink.add(jsonEncode({
+        'type': 'audio',
+        'source_mode': translationSourceMode,
+        'sequence': ++_sequence,
+        'pcm16_base64': base64Encode(bytes),
+      }));
+    }
   }
 
   @override
   Future<void> close() async {
     _connected = false;
+    // A stop signal permits the backend to flush translated voice.
+    if (_channel != null) {
+      _channel!.sink.add(jsonEncode({'type': 'stop'}));
+    }
     await _subscription?.cancel();
     await _channel?.sink.close();
     await _events.close();
