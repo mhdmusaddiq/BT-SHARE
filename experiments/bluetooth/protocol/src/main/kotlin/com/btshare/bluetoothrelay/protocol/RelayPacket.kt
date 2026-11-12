@@ -3,6 +3,9 @@ package com.btshare.bluetoothrelay.protocol
 enum class PacketType(val wireValue: Int) {
     DATA(1),
     ACKNOWLEDGEMENT(2),
+    AUDIO_START(3),
+    AUDIO_CHUNK(4),
+    AUDIO_END(5),
     ;
 
     companion object {

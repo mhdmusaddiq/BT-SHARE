@@ -12,6 +12,10 @@
         android:name="android.permission.BLUETOOTH_ADMIN"
         android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <application
         android:allowBackup="false"
@@ -20,6 +24,16 @@
         android:theme="@style/Theme.BtShareRelay">
         <activity
             android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+            <!-- Separate R1/R2 three-phone launcher. Original B0 activity remains intact. -->
+        <activity
+            android:name=".meshpoc.RelayDemoActivity"
+            android:label="BT-SHARE Relay Demo"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

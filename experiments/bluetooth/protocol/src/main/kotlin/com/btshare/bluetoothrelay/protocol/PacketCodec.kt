@@ -53,10 +53,7 @@ class PacketCodec(
 
         val payload = ByteArray(buffer.remaining())
         buffer.get(payload)
-        if (type == PacketType.ACKNOWLEDGEMENT && payload.isNotEmpty()) {
-            throw ProtocolException("Acknowledgement packets must not contain a payload")
-        }
-        return RelayPacket(type, sequence, payload)
+        return RelayPacket(type, sequence, payload).also(AudioWireFormat::validatePacket)
     }
 
     @Throws(ProtocolException::class)
@@ -66,9 +63,7 @@ class PacketCodec(
                 "Payload is ${packet.payload.size} bytes; maximum is $maximumPayloadBytes",
             )
         }
-        if (packet.type == PacketType.ACKNOWLEDGEMENT && packet.payload.isNotEmpty()) {
-            throw ProtocolException("Acknowledgement packets must not contain a payload")
-        }
+        AudioWireFormat.validatePacket(packet)
 
         val bodyLength = HEADER_BYTES + packet.payload.size
         val dataOutput = DataOutputStream(output)

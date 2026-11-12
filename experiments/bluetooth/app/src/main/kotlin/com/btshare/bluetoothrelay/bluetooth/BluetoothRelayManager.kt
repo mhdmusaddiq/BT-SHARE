@@ -5,6 +5,10 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
+import com.btshare.bluetoothrelay.audio.ReceiverAudioPlayer
+import com.btshare.bluetoothrelay.protocol.AudioReceiveSummary
+import com.btshare.bluetoothrelay.protocol.AudioSendSummary
+import com.btshare.bluetoothrelay.protocol.AudioStreamMetadata
 import com.btshare.bluetoothrelay.protocol.RelaySession
 import java.io.IOException
 import java.util.UUID
@@ -14,6 +18,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 @SuppressLint("MissingPermission")
 class BluetoothRelayManager(
@@ -26,6 +31,10 @@ class BluetoothRelayManager(
         fun onMessageSent(sequence: Long, text: String)
         fun onMessageReceived(sequence: Long, text: String)
         fun onAcknowledgement(sequence: Long, roundTripNanos: Long)
+        fun onAudioSendFinished(summary: AudioSendSummary)
+        fun onAudioReceiveStarted(streamId: Long, metadata: AudioStreamMetadata)
+        fun onAudioReceiveFinished(summary: AudioReceiveSummary)
+        fun onAudioPlaybackStatus(message: String)
         fun onNotice(message: String)
         fun onError(message: String, error: Throwable?)
     }
@@ -38,6 +47,27 @@ class BluetoothRelayManager(
     )
     private val lock = Any()
     private val closed = AtomicBoolean(false)
+    private val audioSendGeneration = AtomicLong(0L)
+    private val receiverAudioPlayer = ReceiverAudioPlayer(
+        object : ReceiverAudioPlayer.Listener {
+            override fun onPlaybackStatus(message: String) {
+                dispatch { listener.onAudioPlaybackStatus(message) }
+            }
+
+            override fun onPlaybackFinished(summary: AudioReceiveSummary, bufferUnderruns: Int) {
+                dispatch {
+                    listener.onAudioPlaybackStatus(
+                        "Receiver playback ${summary.result}: stream=${summary.streamId} " +
+                            "duration=${summary.durationMillis}ms underruns=$bufferUnderruns",
+                    )
+                }
+            }
+
+            override fun onPlaybackError(message: String, error: Throwable?) {
+                emitError(message, error)
+            }
+        },
+    )
 
     @Volatile
     private var generation = 0L
@@ -82,8 +112,43 @@ class BluetoothRelayManager(
         }
     }
 
+    fun sendAudio(pcmBytes: ByteArray) {
+        ensureOpen()
+        val sessionAndGeneration = synchronized(lock) {
+            activeSession?.let { it to generation }
+        }
+        if (sessionAndGeneration == null) {
+            emitError("Cannot send audio while no peer is connected", null)
+            return
+        }
+
+        val (session, runId) = sessionAndGeneration
+        val sendId = audioSendGeneration.incrementAndGet()
+        val audioCopy = pcmBytes.copyOf()
+        writerExecutor.execute {
+            try {
+                val summary = session.sendAudio(audioCopy) {
+                    isActive(runId) && audioSendGeneration.get() == sendId
+                }
+                if (isActive(runId)) {
+                    dispatch { listener.onAudioSendFinished(summary) }
+                }
+            } catch (error: Exception) {
+                handleConnectionFailure(runId, "Audio send failed", error)
+            }
+        }
+    }
+
+    fun stopAudio() {
+        if (closed.get()) return
+        audioSendGeneration.incrementAndGet()
+        receiverAudioPlayer.stop("Receiver playback stopped by user")
+        dispatch { listener.onAudioPlaybackStatus("Audio stopped") }
+    }
+
     fun stop() {
         if (closed.get()) return
+        stopAudio()
         synchronized(lock) {
             generation += 1
             closeActiveLocked()
@@ -211,6 +276,40 @@ class BluetoothRelayManager(
                 listener.onNotice("Ignored unexpected ACK for sequence $sequence")
             }
         }
+
+        override fun onAudioStreamStarted(streamId: Long, metadata: AudioStreamMetadata) {
+            if (!isActive(runId)) return
+            if (!receiverAudioPlayer.start(streamId, metadata)) {
+                emitError("Could not queue receiver audio start", null)
+                return
+            }
+            dispatch { listener.onAudioReceiveStarted(streamId, metadata) }
+        }
+
+        override fun onAudioChunkReceived(
+            streamId: Long,
+            chunkIndex: Int,
+            pcmBytes: ByteArray,
+        ) {
+            if (!isActive(runId)) return
+            if (!receiverAudioPlayer.enqueue(streamId, pcmBytes)) {
+                emitError("Receiver audio queue is full; stream $streamId stopped", null)
+            }
+        }
+
+        override fun onAudioStreamEnded(summary: AudioReceiveSummary) {
+            if (!isActive(runId)) return
+            dispatch { listener.onAudioReceiveFinished(summary) }
+            if (!receiverAudioPlayer.finish(summary)) {
+                emitError("Could not queue receiver audio completion", null)
+            }
+        }
+
+        override fun onAudioProtocolIssue(streamId: Long?, message: String) {
+            if (isActive(runId)) dispatch {
+                listener.onNotice("Audio stream ${streamId ?: "unknown"}: $message")
+            }
+        }
     }
 
     private fun handleConnectionFailure(runId: Long, message: String, error: Exception) {
@@ -228,6 +327,8 @@ class BluetoothRelayManager(
     }
 
     private fun replaceActiveConnection(): Long = synchronized(lock) {
+        audioSendGeneration.incrementAndGet()
+        receiverAudioPlayer.stop("Connection replaced; receiver playback stopped")
         generation += 1
         closeActiveLocked()
         generation
@@ -266,6 +367,7 @@ class BluetoothRelayManager(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        audioSendGeneration.incrementAndGet()
         synchronized(lock) {
             generation += 1
             closeActiveLocked()
@@ -273,6 +375,7 @@ class BluetoothRelayManager(
         emitState(ConnectionState.IDLE, "Closed")
         connectionExecutor.shutdownNow()
         writerExecutor.shutdownNow()
+        receiverAudioPlayer.close()
     }
 
     companion object {
