@@ -1,31 +1,47 @@
-# C0 Provider decision — 2026-11-11
+# C0 — Gemini provider migration decision (2026-11-13)
 
-**Selection for C2 POC:** a segmented MIC-only chain: gpt-transcribe
-(original text) -> gpt-4.1-mini (Tamil/English translation) ->
-gpt-4o-mini-tts (generated WAV audio). This is NOT simultaneous translation.
+## Selected C2 architecture
 
-## Language constraint
-OpenAI gpt-realtime-translate has 13 OUTPUT languages and excludes Tamil;
-using it as the only Tamil voice provider would fail for English->Tamil.
-The text-to-speech API documents Tamil output among its supported languages.
-GPT-4o-mini-tts is deprecated with a Jan 6, 2027 shutdown announced,
-so replace the TTS leg before that date. Tamil ASR/voice quality remains
-unverified on a real provider.
+User explicitly requested replacing OpenAI with **Google Gemini** while
+preserving the Flutter integration and WebSocket contract.
 
-Docs (viewed 2026-11-11):
-- https://developers.openai.com/cookbook/examples/voice_solutions/realtime_translation_guide
-- https://developers.openai.com/api/docs/guides/text-to-speech
-- https://developers.openai.com/api/docs/guides/speech-to-text
+- Client input: MIC-only PCM16 mono @ 16 kHz; no MEDIA capture.
+- Gateway: existing Python FastAPI /v1/stream with the same temporary token.
+- Gemini transcription+translation: `gemini-3.8-flash` via native
+  `v1beta/models/{model}:generateContent`, short WAV audio embedded as
+  inlineData, structured JSON containing original_text/translated_text.
+- Gemini voice: `gemini-3.8-flash-lite-tts` via `v1beta/interactions`,
+  output `audio/wav` with voice `Kore`. Gemini TTS supports Tamil.
+- Mobile output: unchanged segment JSON and playable WAV file.
+- Runtime configuration: `GEMINI_API_KEY` server-side. Optionally
+  `GEMINI_TEXT_MODEL`, `GEMINI_TTS_MODEL`, `GEMINI_TTS_VOICE`.
+- No OpenAI API key, host or billable OpenAI call remains in active code.
+- Only the experimental Member 3 branch and owned scope changed.
 
-## Security and cost
-Only the server holds OPENAI_API_KEY. A separate temporary, shared
-BT_DEV_GATEWAY_TOKEN is a test-only private-LAN gate, NOT production user auth.
-Client dart-defines/JSON values are extractable; never put the vendor API key
-in Flutter. No secrets, PCM samples or transcripts are checked into Git.
-The three stages incur vendor charges; verify active billing and quotas.
-No live call or cost/latency measurement has been performed.
+## Constraints and tradeoffs
 
-## Acceptance status
-C1 user-reported 03:56 MIC capture works in MOCK mode. C2 remains
-NOT_RUN_PHYSICAL until an authenticated provider call from a consented
-Android device returns BOTH accurate text and generated audio.
+The two-call segmented Gemini pipeline is simpler and easier to test
+than native simultaneous voice streaming, but adds utterance buffering
+(~0.5s silence) and two sequential request latencies. It may miss short
+speech; threshold-based voice activity segmentation is NOT production VAD.
+Gemini model availability may vary by region/account and prices may apply.
+Do not report live Tamil transcription accuracy or AI latency before tests.
+
+This test gateway uses a dev-only shared token, insecure WebSocket on
+trusted LAN and no durable recording. It needs TLS/WSS, authenticated
+per-user session tokens, stronger quotas and secure audit/consent for
+production. Vendor API keys must NOT be embedded in Flutter or committed.
+TTS audio and text are processed remotely; explain this clearly to users.
+
+## Vendor documentation (checked 2026-11-13)
+
+- https://ai.google.dev/gemini-api/docs/models
+- https://ai.google.dev/api/generate-content
+- https://ai.google.dev/gemini-api/docs/speech-generation
+- https://ai.google.dev/gemini-api/docs/api-key
+
+## Evidence
+Earlier 7 Python + 7 Flutter automated tests were reported PASS by the
+tester **before** this Gemini provider migration. New Gemini contract tests
+have been authored but remain NOT_EXECUTED until the user's next
+`python -m pytest gateway -q` output and live test. Reviewer sign-off pending.
