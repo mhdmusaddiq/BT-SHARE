@@ -32,7 +32,7 @@ function Test-InstalledJdk17([string]$Directory) {
     finally {
         $process.Dispose()
     }
-    return [bool]($lines -match '(?m)(?:openjdk|java) version "17(?:\\.|")|(?:openjdk|java) 17(?:\\.|\\s)')
+    return [bool]($lines -match '(?m)(?:openjdk|java) version "17(?:\.|")|(?:openjdk|java) 17(?:\.|\s)')
 }
 
 $candidates = [System.Collections.Generic.List[string]]::new()
