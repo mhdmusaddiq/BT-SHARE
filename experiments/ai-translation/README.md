@@ -476,3 +476,45 @@ References:
 - https://developers.openai.com/api/docs/guides/realtime-translation
 - https://developers.openai.com/api/reference/resources/realtime/translation-server-events
 - https://pub.dev/packages/audio_stream_player
+
+## Windows Android Gradle JVM target fix (2026-11-15)
+
+The Flutter `audio_stream_player: 1.1.0` Android plugin targets **Java 17**
+in its own `android/build.gradle.kts`. Some Flutter toolchains run with
+JDK 21 and Kotlin produces JVM 21 bytecode; Gradle then rejects the
+inconsistent pair: `compileDebugJavaWithJavac (17)` vs
+`compileDebugKotlin (21)`.
+
+**Recommended remedy:** select a verified local JDK 17 for Flutter, rather
+than suppressing Kotlin target validation, editing Gradle Pub Cache files,
+changing Android minimum SDK or modifying generated Android resources.
+
+```powershell
+cd "G:\BT-Share\BT-SHARE\BT-SHARE\experiments\ai-translation"
+git pull --ff-only origin Sihan-Member-3
+powershell -ExecutionPolicy Bypass -File .\scripts\use_flutter_jdk17.ps1
+flutter clean
+flutter pub get
+flutter run -d f7d152a --dart-define-from-file=local_gateway.json
+```
+
+If the script reports that no JDK 17 is installed:
+`winget install -e --id EclipseAdoptium.Temurin.17.JDK` and rerun it.
+Use `-JdkPath "C:\path\to\jdk-17"` if installed somewhere unusual.
+The script **checks** `bin/java.exe` and `bin/javac.exe`, verifies that
+`java -version` reports major version 17, and calls
+`flutter config --jdk-dir` only when it has a good path. It never edits
+a generated Gradle build file, package cache or secrets.
+
+**Important:** `flutter config --jdk-dir` affects **all local Flutter
+projects**. Users with projects requiring JDK 21 should record their
+previous Flutter JDK path (`flutter doctor -v`) and set it back later
+using `flutter config --jdk-dir="C:\previous\jdk\path"`.
+
+The `flutter_tts` Kotlin Gradle Plugin deprecation warning is separate
+from this `audio_stream_player` JVM-target build failure.
+
+Sources:
+- https://kotlinlang.org/docs/gradle-configure-project.html#check-for-jvm-target-compatibility-of-related-compile-tasks
+- https://developer.android.com/build/jdks
+- https://github.com/adrianczuczka/audio_stream_player/blob/v1.1.0/android/build.gradle.kts
