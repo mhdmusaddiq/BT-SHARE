@@ -320,3 +320,98 @@ Documentation:
   `python -m pytest gateway -q`, `flutter analyze`, `flutter test`,
   and check on a physical Redmi Note 9 Pro. The GitHub edit is not equivalent
   to a successful device test. No OpenAI key is stored in app or git.
+
+## C3 Phase 1 · Continuous live captions (opt-in, 2026-11-15)
+
+**Goal:** Tamil ↔ English subtitles update **as speech arrives**, instead of
+waiting for a silence break and three sequential cloud API requests. This is
+a separate **Realtime Caption Mode** with dedicated OpenAI translation
+session, not a speed claim for the existing segmented implementation.
+
+### Mode selection and rollback
+
+The old segmented translator **remains the default** and retains its
+existing generated MP3/WAV voice and speaker button.
+
+In the Python Gateway terminal choose:
+
+```powershell
+# Run once after pulling updated code:
+& "G:\BT-Share\.venv\Scripts\python.exe" -m pip install -r gateway/requirements.txt
+
+# Choose live caption-only (no streaming voice yet):
+$env:BT_AI_CAPTION_ENGINE = "realtime"
+
+# Or revert to the old fully working segmented translator and voice:
+$env:BT_AI_CAPTION_ENGINE = "segmented"
+```
+
+The setting is read at the start of each mobile session; restart Uvicorn
+after changing the variable for clarity. Keep `BT_DEV_GATEWAY_TOKEN` and
+`OPENAI_API_KEY` in the **Python server terminal only**, loaded exactly as
+for the previous C2 build; never paste or commit them. Client
+`local_gateway.json` uses the **same** existing `/v1/stream` endpoint,
+`BT_AI_PROVIDER=gateway`, same token, and cloud microphone consent.
+
+With `BT_AI_CAPTION_ENGINE=realtime`, gateway uses
+`wss://api.openai.com/v1/realtime/translations?model=gpt-realtime-translate`
+after authenticating the phone. Its original 16 kHz mono MIC PCM is
+resampled with the existing stateful `Pcm16To24` into 24 kHz mono PCM16 and
+sent in 200 ms frames continuously, **including silence**. The OpenAI API
+returns append-only `session.input_transcript.delta` and
+`session.output_transcript.delta` events; the gateway coalesces bursts
+into at most about 12.5 UI updates per second, sends snapshots under stable
+ID `live-current`, and bounds each running caption to the last 1400 chars.
+Both languages' captions may arrive at different moments. Do not insert
+spaces or assume perfect word/sentence alignment between deltas.
+
+The Flutter screen shows a **LIVE** indicator. The speaker button stays
+disabled with an explicit **Live captions only** message. Generated
+translated PCM deltas are **discarded in Phase 1**; processing/model charges
+may still apply. Phase 2 will implement synchronized buffered streaming
+voice playback with proper microphone echo protection. Do not confuse
+caption-only mode with failed TTS playback.
+
+### Test, measure, and fallback
+
+```powershell
+cd "G:\BT-Share\BT-SHARE\BT-SHARE\experiments\ai-translation"
+git status --short
+git pull --ff-only origin Sihan-Member-3
+& "G:\BT-Share\.venv\Scripts\python.exe" -m pip install -r gateway/requirements.txt
+& "G:\BT-Share\.venv\Scripts\python.exe" -m pytest gateway -q
+flutter analyze
+flutter test
+```
+
+If the updated Python tests or Flutter tests fail, fix failures before
+turning on live mode. Stop Uvicorn with Ctrl+C; reload the existing
+BT_DEV_GATEWAY_TOKEN and OPENAI_API_KEY if starting a **new** terminal.
+Then set `$env:BT_AI_CAPTION_ENGINE="realtime"` and run:
+
+```powershell
+& "G:\BT-Share\.venv\Scripts\python.exe" -m uvicorn gateway.app:app --host 0.0.0.0 --port 8098
+```
+
+Keep hotspot IPv4 and `local_gateway.json` WebSocket URL in sync,
+`flutter run -d f7d152a --dart-define-from-file=local_gateway.json`.
+Speak continuously for 15–30 seconds, without an intentional pause:
+translated text should **begin changing while speech is ongoing**.
+Test Tamil → English and English → Tamil, number preservation, 5-minute
+continuity, microphone Stop, consent, token rejection, hotspot loss and
+Retry. Distinguish **first source text**, **first translated text** and
+**voice** times; realtime captions have no voice in this phase.
+
+Rollback if Realtime model access is unavailable or transcript quality is
+worse: `$env:BT_AI_CAPTION_ENGINE="segmented"`, restart Uvicorn, then Retry
+on Android. It restores prior STT → translation → TTS and full voice
+without a Flutter rebuild.
+
+**Not yet confirmed:** local Python/Flutter tests for the new branch,
+OpenAI production entitlement/quotas, device timings, Tamil quality and
+continuous phone operation. A 200ms engine audio frame is **not** a 200ms
+guarantee for first translated words. True latency depends on speech content,
+network, model processing, device rendering and quality/accuracy tradeoffs.
+
+Source: https://developers.openai.com/api/docs/guides/realtime-translation
+

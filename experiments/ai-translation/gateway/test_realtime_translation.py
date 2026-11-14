@@ -107,9 +107,10 @@ def test_fake_realtime_ws_deltas_flow_during_microphone_capture(monkeypatch):
             assert ready["provider"] == "realtime-translation-captions"
             assert ready["audio_frame_ms"] == 200
 
-            # 2 x 100ms mic buffers = 200ms resampled provider frame.
+            # The stateful interpolator may be one sample short after 200ms,
+            # so send 300ms to guarantee the first complete 24kHz frame.
             mic_pcm = array("h", [1000] * 1600).tobytes()
-            for sequence in (1, 2):
+            for sequence in (1, 2, 3):
                 ws.send_json({
                     "type": "audio", "source_mode": "MIC",
                     "sequence": sequence,
