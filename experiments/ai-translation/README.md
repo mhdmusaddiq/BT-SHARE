@@ -214,3 +214,83 @@ References:
 - https://developers.openai.com/api/docs/guides/speech-to-text
 - https://developers.openai.com/api/docs/guides/text-to-speech
 - https://developers.openai.com/api/docs/deprecations
+
+## C2 Fast Mode — staged low-latency output (2026-11-14)
+
+**Opt-in rollback without Flutter rebuild:** new Python gateway defaults to
+`BT_AI_LATENCY_MODE=fast`. To revert to the previous known-working user
+experience, set `BT_AI_LATENCY_MODE=stable` in the **same PowerShell terminal**
+**before starting** Uvicorn. Restarting the gateway is required. The
+Flutter `local_gateway.json` endpoint, dev token, consent and keys are unchanged.
+
+```powershell
+# First stop old Python server using Ctrl+C in its terminal.
+cd "G:\BT-Share\BT-SHARE\BT-SHARE\experiments\ai-translation"
+git status --short
+git pull --ff-only origin Sihan-Member-3
+& "G:\BT-Share\.venv\Scripts\python.exe" -m pytest gateway -q
+
+# In server terminal: load the existing token and OpenAI key (secret input).
+$config = Get-Content .\local_gateway.json -Raw | ConvertFrom-Json
+$env:BT_DEV_GATEWAY_TOKEN = $config.BT_AI_SESSION_TOKEN
+$env:BT_AI_LATENCY_MODE = "fast"
+$secret = Read-Host "Enter OpenAI API key" -AsSecureString
+$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new("", $secret).Password
+Remove-Variable secret -ErrorAction SilentlyContinue
+
+& "G:\BT-Share\.venv\Scripts\python.exe" -m uvicorn gateway.app:app --host 0.0.0.0 --port 8098
+```
+
+The original stable architecture waited **five** 100ms PCM frames of silence
+(~500ms) before processing. Fast mode needs **three** silent frames (~300ms).
+The 0.8s minimum utterance and 5s maximum segmentation remain unchanged.
+Shorter pause detection can split speech on natural pauses, so compare Tamil
+phrases and accents before production rollout. These values are algorithmic,
+**not actual measured wall-clock latency improvements**.
+
+Fast mode also sends the first translated subtitle immediately after
+transcription+translation completes, **before** TTS returns. Later it updates
+the **same** `segment_id` with the generated WAV audio. Flutter's existing
+controller merges the two messages without duplicate captions and will only
+auto-speak on the audio-bearing final event. In stable mode the server retains
+a single caption+audio event after all three API calls, as before.
+
+Each completed segment includes optional `stage_timings_ms` values for
+`stt`, `translation` and `tts` (gateway processing only) plus existing
+`latency_ms` (server stage total). The Android UI currently displays only
+the server latency; it is **not** speech-end-to-first-audio latency. Neither
+voice nor text contents are logged or saved by this gateway.
+
+### Verify without losing existing working setup
+
+1. Run `python -m pytest gateway -q`, `flutter analyze`, `flutter test`
+   before the physical trial; new tests exercise both modes and incremental
+   captions. Old baseline had user-reported 7 Python tests, 7 Flutter tests;
+   those results do **not** cover this change.
+2. Restart Python Gateway. Change only `BT_AI_LATENCY_MODE` to select mode.
+3. Current phone hotspot IPv4 may differ from previously reported
+   `10.160.198.82`. Verify `ipconfig` and `local_gateway.json` match.
+4. Fresh `flutter run -d <DEVICE_ID> --dart-define-from-file=local_gateway.json`
+   after pulling the added Flutter test (Flutter runtime source is unchanged).
+5. Consent to cloud MIC processing. Speak 10 short Tamil and 10 English
+   phrases, then compare the time until captions first appear and when WAV
+   voice plays, as well as translation accuracy and dropped phrases.
+6. Check start/retry, language swap, microphone stop/privacy icon, settings,
+   user playback, backgrounding, hotspot disconnect, reconnection, and
+   at least a 5-minute continuous session with intentional pauses.
+7. If speech is cut on short pauses or errors increase, revert:
+   `$env:BT_AI_LATENCY_MODE = "stable"` and restart Uvicorn.
+
+**Known limitations:** unchanged three sequential OpenAI requests mean
+audio response latency still depends on the full TTS call. Fast mode makes
+first captions visible earlier and reduces end-of-utterance silence buffering,
+but cannot deliver zero-latency voice. Full duplex true continuous streaming,
+echo cancellation under auto-speak, durable retries and production security
+are separate milestones. Never claim production readiness without physical
+tests, and never commit `OPENAI_API_KEY` or a local gateway token.
+
+Documentation:
+- https://developers.openai.com/api/docs/guides/latency-optimization
+- https://developers.openai.com/api/docs/guides/text-to-speech
+- https://developers.openai.com/api/docs/guides/realtime-translation
+

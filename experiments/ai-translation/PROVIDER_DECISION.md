@@ -36,3 +36,14 @@ References (checked 2026-11-14):
 - https://developers.openai.com/api/docs/guides/text-to-speech
 - https://developers.openai.com/api/docs/deprecations
 - https://help.openai.com/en/articles/9039756-managing-billing-for-chatgpt-and-the-api-platform
+
+## Latency optimization on 2026-11-14
+
+Member 3 can run the same OpenAI pipeline in Python-only `fast` (default)
+or `stable` (rollback) mode. Fast uses 300ms instead of 500ms silence
+segmentation, emits translated text before slow TTS, then updates identical
+caption ID with WAV. Stage timings are emitted as non-sensitive JSON fields.
+Flutter MIC capture, consent, reverse-language switching, audio playback,
+session protocol and OpenAI model choices remain unchanged. The separate
+three API calls make end-to-end voice latency nonzero; actual device
+measurements and quality comparison are pending.

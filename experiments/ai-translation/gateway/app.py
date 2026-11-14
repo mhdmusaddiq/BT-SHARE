@@ -135,19 +135,24 @@ class TranslationPipeline:
         source: str,
         target: str,
         on_text: Callable[[str, str], Awaitable[None]] | None = None,
+        metrics: dict[str, int] | None = None,
     ) -> tuple[str, str, bytes]:
         # No audio, generated text or API response is logged or stored.
+        stage_timings = {}
+        started_stt = time.monotonic()
         stt = await self.client.post(
             "/audio/transcriptions",
             data={"model": "gpt-transcribe"},
             files={"file": ("microphone.wav", wav_16k(pcm), "audio/wav")},
         )
         stt.raise_for_status()
+        stage_timings["stt"] = round((time.monotonic() - started_stt) * 1000)
         original = stt.json().get("text")
         if not isinstance(original, str) or not original.strip():
             return "", "", b""
         source_name = "Tamil" if source == "ta" else "English"
         target_name = "Tamil" if target == "ta" else "English"
+        started_translation = time.monotonic()
         translation = await self.client.post(
             "/chat/completions",
             json={
@@ -164,6 +169,9 @@ class TranslationPipeline:
             },
         )
         translation.raise_for_status()
+        stage_timings["translation"] = round(
+            (time.monotonic() - started_translation) * 1000
+        )
         translated = translation.json()["choices"][0]["message"]["content"]
         if not isinstance(translated, str) or not translated.strip():
             raise ProtocolError("Translation service returned no text")
@@ -173,6 +181,7 @@ class TranslationPipeline:
         # request completes. No extra billable OpenAI request is made.
         if on_text is not None:
             await on_text(original, translated)
+        started_tts = time.monotonic()
         speech = await self.client.post(
             "/audio/speech",
             json={
@@ -183,8 +192,11 @@ class TranslationPipeline:
             },
         )
         speech.raise_for_status()
+        stage_timings["tts"] = round((time.monotonic() - started_tts) * 1000)
         if not speech.content or len(speech.content) > 3_000_000:
             raise ProtocolError("Generated audio is empty or oversized")
+        if metrics is not None:
+            metrics.update(stage_timings)
         return original, translated, speech.content
 
 
@@ -275,9 +287,11 @@ async def translate_socket(mobile: WebSocket):
                     "latency_ms": round((time.monotonic() - started) * 1000),
                 })
 
+            timings: dict[str, int] = {}
             original, translated, voice = await pipeline.translate(
                 pcm, source, target,
                 on_text=send_text if latency_mode == "fast" else None,
+                metrics=timings,
             )
             if not original:
                 continue
@@ -289,6 +303,8 @@ async def translate_socket(mobile: WebSocket):
                 "translated_text": translated,
                 "audio_mime_type": "audio/wav",
                 "translated_audio_base64": base64.b64encode(voice).decode("ascii"),
+                # Non-sensitive per-stage durations; Flutter can ignore extras.
+                "stage_timings_ms": timings,
                 # Complete server pipeline time, not end-to-end latency.
                 "latency_ms": round((time.monotonic() - started) * 1000),
             })

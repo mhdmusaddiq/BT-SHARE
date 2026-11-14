@@ -69,6 +69,7 @@ async def test_text_reaches_client_before_tts():
         events.append("caption")
         assert (original, translated) == ("வணக்கம்", "Hello")
 
+    metrics = {}
     async with httpx.AsyncClient(
         base_url="https://api.openai.com/v1",
         transport=httpx.MockTransport(respond),
@@ -76,9 +77,11 @@ async def test_text_reaches_client_before_tts():
         p = TranslationPipeline("fake-test-token", client)
         original, translated, wav = await p.translate(
             array("h", [1500] * 32000).tobytes(), "ta", "en",
-            on_text=on_text,
+            on_text=on_text, metrics=metrics,
         )
     assert events == ["stt", "translation", "caption", "tts"]
+    assert set(metrics) == {"stt", "translation", "tts"}
+    assert all(value >= 0 for value in metrics.values())
     assert (original, translated) == ("வணக்கம்", "Hello")
     assert wav.startswith(b"RIFF")
 
