@@ -415,3 +415,64 @@ network, model processing, device rendering and quality/accuracy tradeoffs.
 
 Source: https://developers.openai.com/api/docs/guides/realtime-translation
 
+## C3 Phase 2 · Live translated voice (opt-in; 2026-11-15)
+
+**New mode:** Realtime Translate now optionally forwards OpenAI
+`session.output_audio.delta` PCM16 (24kHz mono) to Flutter using bounded,
+sequence-checked `audio_delta` events. Flutter uses
+`audio_stream_player: ^1.1.0` (native Android AudioTrack on Redmi Note 9 Pro)
+to feed PCM as it arrives; it does **not** wait for full MP3/WAV.
+A distinct realtime transcript segment `live-current` keeps updating
+alongside the audio stream. Audio is **not** saved or available for replay
+from the caption speaker icon.
+
+**Safe defaults:** `BT_AI_CAPTION_ENGINE=segmented` is the old working
+gateway and its full-file generated TTS remains unchanged.
+`BT_AI_CAPTION_ENGINE=realtime` and `BT_AI_REALTIME_VOICE=0` is
+the user-verified continuous caption-only mode. Realtime voice must
+be explicitly enabled by setting both variables in the Python gateway
+terminal **before Uvicorn starts**:
+
+```powershell
+$env:BT_AI_CAPTION_ENGINE = "realtime"
+$env:BT_AI_REALTIME_VOICE = "1"
+```
+
+Keep the existing `OPENAI_API_KEY` and `BT_DEV_GATEWAY_TOKEN` in the
+server process environment, not GitHub or the Flutter app.
+Run `pip install -r gateway/requirements.txt`, `flutter pub get`,
+`python -m pytest gateway -q`, `flutter analyze`, and
+`flutter test` before device testing. Then restart Uvicorn and rebuild
+the app with `flutter run -d f7d152a --dart-define-from-file=local_gateway.json`.
+
+To **hear** the realtime translation, open the app **Settings** and set
+**Translated voice output = ON**, **Speak automatically = ON**.
+The default auto-speak is OFF intentionally; user should prefer wired or
+Bluetooth headphones, to prevent AI voice from feeding back into mic
+despite the existing microphone echoCancel/noiseSuppress flags. Some
+Android devices suppress recording/playback when sharing audio focus;
+real-world concurrent MIC + speaker tests are required.
+
+Bounded delivery: server splits provider deltas into <=9600-byte frames
+and rejects invalid PCM. Flutter validates continuous sequence and audio
+metadata and has a 120KB (2.5s) pending Dart work limit. The native
+streaming player checks buffered duration (2s); if playback falls behind
+it reports a device playback error and stops voice, not the microphone
+session. Stop/retry/mute cancels the subscription, drains async tasks
+and disposes the audio sink. No translated audio is persisted.
+
+**Rollback without app rebuild:** set
+`BT_AI_REALTIME_VOICE=0` and restart gateway for Phase 1 captions.
+Or select `BT_AI_CAPTION_ENGINE=segmented` for original full voice
+with manual speaker replay. No changes to MIC-only permissions,
+auth token flow, or local-room audio connection.
+
+**Not yet verified:** Flutter/Dart compilation and Python regression
+tests must run in the Windows environment; live bilingual 5-minute
+translation, output timing, echo and jitter are unmeasured until user
+reports device results. This code is an opt-in POC, not production ready.
+
+References:
+- https://developers.openai.com/api/docs/guides/realtime-translation
+- https://developers.openai.com/api/reference/resources/realtime/translation-server-events
+- https://pub.dev/packages/audio_stream_player

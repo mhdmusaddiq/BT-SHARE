@@ -85,6 +85,7 @@ def test_fake_realtime_ws_deltas_flow_during_microphone_capture(monkeypatch):
     monkeypatch.setenv("BT_DEV_GATEWAY_TOKEN", "unit-test-token")
     monkeypatch.setenv("OPENAI_API_KEY", "fake-provider-key")
     monkeypatch.setenv("BT_AI_CAPTION_ENGINE", "realtime")
+    monkeypatch.setenv("BT_AI_REALTIME_VOICE", "0")
     fake = FakeRealtimeUpstream()
 
     def fake_connect(url, **kwargs):
@@ -138,6 +139,7 @@ def test_realtime_rejects_media_even_when_realtime_enabled(monkeypatch):
     monkeypatch.setenv("BT_DEV_GATEWAY_TOKEN", "unit-test-token")
     monkeypatch.setenv("OPENAI_API_KEY", "fake-provider-key")
     monkeypatch.setenv("BT_AI_CAPTION_ENGINE", "realtime")
+    monkeypatch.setenv("BT_AI_REALTIME_VOICE", "0")
     with TestClient(app) as client:
         with client.websocket_connect("/v1/stream") as ws:
             ws.send_json({
@@ -149,3 +151,96 @@ def test_realtime_rejects_media_even_when_realtime_enabled(monkeypatch):
             error = ws.receive_json()
             assert error["type"] == "error"
             assert "Unauthorized MIC" in error["message"]
+
+
+class FakeRealtimeWithAudio(FakeRealtimeUpstream):
+    async def send(self, message):
+        event = json.loads(message)
+        # Append audio after the first frame while connection remains active.
+        if event["type"] == "session.input_audio_buffer.append":
+            await super().send(message)
+            if self.audio_frames == 1:
+                await self.events.put(json.dumps({
+                    "type": "session.output_audio.delta",
+                    "format": "pcm16", "sample_rate": 24000, "channels": 1,
+                    "elapsed_ms": 200,
+                    "delta": base64.b64encode(bytes(19200)).decode("ascii"),
+                }))
+            return
+        await super().send(message)
+
+
+def test_realtime_streams_real_pcm_audio_as_bounded_frames(monkeypatch):
+    monkeypatch.setenv("BT_DEV_GATEWAY_TOKEN", "unit-test-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-provider-key")
+    monkeypatch.setenv("BT_AI_CAPTION_ENGINE", "realtime")
+    monkeypatch.setenv("BT_AI_REALTIME_VOICE", "1")
+    fake = FakeRealtimeWithAudio()
+    monkeypatch.setattr(realtime, "connect", lambda *a, **k: fake)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/v1/stream") as ws:
+            ws.send_json({
+                "type": "start", "source_mode": "MIC",
+                "source_language": "ta", "target_language": "en",
+                "format": "pcm_s16le", "sample_rate_hz": 16000,
+                "channels": 1, "ephemeral_session_token": "unit-test-token",
+            })
+            ready = ws.receive_json()
+            assert ready["streaming_audio"] is True
+            assert ready["caption_only"] is False
+            mic_pcm = array("h", [1000] * 1600).tobytes()
+            for seq in (1, 2, 3):
+                ws.send_json({
+                    "type": "audio", "source_mode": "MIC", "sequence": seq,
+                    "pcm16_base64": base64.b64encode(mic_pcm).decode("ascii"),
+                })
+            audio = []
+            for _ in range(8):
+                payload = ws.receive_json()
+                if payload["type"] == "audio_delta":
+                    audio.append(payload)
+                    if len(audio) == 2:
+                        break
+            assert [a["sequence"] for a in audio] == [1, 2]
+            assert all(a["sample_rate_hz"] == 24000 for a in audio)
+            assert all(a["channels"] == 1 and a["encoding"] == "pcm_s16le"
+                       for a in audio)
+            assert all(len(base64.b64decode(a["pcm16_base64"])) == 9600
+                       for a in audio)
+            ws.send_json({"type": "stop"})
+
+
+def test_realtime_off_remains_caption_only(monkeypatch):
+    monkeypatch.setenv("BT_DEV_GATEWAY_TOKEN", "unit-test-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-provider-key")
+    monkeypatch.setenv("BT_AI_CAPTION_ENGINE", "realtime")
+    monkeypatch.setenv("BT_AI_REALTIME_VOICE", "0")
+    fake = FakeRealtimeWithAudio()
+    monkeypatch.setattr(realtime, "connect", lambda *a, **k: fake)
+    with TestClient(app) as client:
+        with client.websocket_connect("/v1/stream") as ws:
+            ws.send_json({
+                "type": "start", "source_mode": "MIC",
+                "source_language": "ta", "target_language": "en",
+                "format": "pcm_s16le", "sample_rate_hz": 16000,
+                "channels": 1, "ephemeral_session_token": "unit-test-token",
+            })
+            ready = ws.receive_json()
+            assert ready["streaming_audio"] is False
+            assert ready["caption_only"] is True
+            mic_pcm = array("h", [1000] * 1600).tobytes()
+            for seq in (1, 2, 3):
+                ws.send_json({
+                    "type": "audio", "source_mode": "MIC", "sequence": seq,
+                    "pcm16_base64": base64.b64encode(mic_pcm).decode("ascii"),
+                })
+            updates = []
+            for _ in range(6):
+                msg = ws.receive_json()
+                assert msg["type"] != "audio_delta"
+                updates.append(msg)
+                if msg.get("translated_text") == "Hello":
+                    break
+            assert any(m.get("translated_text") == "Hello" for m in updates)
+            ws.send_json({"type": "stop"})

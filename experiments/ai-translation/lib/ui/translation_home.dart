@@ -419,7 +419,7 @@ class _TranslationHomeState extends State<TranslationHome> {
                             'TRANSLATED · ${controller.target.label.toUpperCase()}',
                             style: _eyebrow,
                           ),
-                          if (segment.captionOnly) ...[
+                          if (segment.captionOnly || segment.streamingAudio) ...[
                             const SizedBox(width: 8),
                             const _Pill(icon: Icons.bolt_rounded, text: 'LIVE'),
                           ],
@@ -440,9 +440,11 @@ class _TranslationHomeState extends State<TranslationHome> {
                               ? () => controller.playSegment(segment)
                               : null,
                           icon: Icon(
-                            !segment.isMock && segment.voiceBytes == null
-                                ? Icons.hourglass_top_rounded
-                                : Icons.volume_up_outlined,
+                            segment.streamingAudio
+                                ? Icons.graphic_eq_rounded
+                                : !segment.isMock && segment.voiceBytes == null
+                                    ? Icons.hourglass_top_rounded
+                                    : Icons.volume_up_outlined,
                           ),
                         ),
                       ),

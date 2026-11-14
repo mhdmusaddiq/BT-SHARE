@@ -214,6 +214,34 @@ void main() {
     c.dispose();
   });
 
+  test('realtime live PCM plays only with auto-speak enabled and stops safely',
+      () async {
+    final mic = FakeMicrophone();
+    final provider = StreamingProgressProvider();
+    final voice = FakeLiveVoice();
+    final c = TranslationSessionController(
+      microphone: mic, providerFactory: () => provider, voice: voice,
+    );
+    c.setCloudConsentGiven(true);
+    await c.start();
+    expect(c.streamingAudioAvailable, isTrue);
+    provider.emitAudio(Uint8List(9600));
+    await flushEvents();
+    expect(voice.liveChunks, 0); // default auto-speak OFF
+    c.setAutoSpeak(true);
+    provider.emitAudio(Uint8List(9600));
+    await flushEvents();
+    expect(voice.liveChunks, 1);
+    c.setAutoSpeak(false);
+    provider.emitAudio(Uint8List(9600));
+    await flushEvents();
+    expect(voice.liveChunks, 1);
+    await c.stop();
+    expect(mic.recording, isFalse);
+    expect(voice.stopped, isTrue);
+    c.dispose();
+  });
+
   test('AI failure never changes local room-link status', () async {
     final mic = FakeMicrophone();
     final c = TranslationSessionController(
@@ -253,6 +281,36 @@ class ProgressProvider implements TranslationProvider {
 
   @override
   Future<void> close() async => _segments.close();
+}
+
+class StreamingProgressProvider extends ProgressProvider
+    implements StreamingTranslationProvider {
+  final _pcm = StreamController<Uint8List>.broadcast();
+  @override
+  bool get supportsStreamingAudio => true;
+  @override
+  Stream<Uint8List> get translatedPcmChunks => _pcm.stream;
+  void emitAudio(Uint8List bytes) => _pcm.add(bytes);
+  @override
+  Future<void> close() async {
+    await _pcm.close();
+    await super.close();
+  }
+}
+
+class FakeLiveVoice extends FakeVoice implements LiveTranslatedVoiceOutput {
+  int liveChunks = 0;
+  bool stopped = false;
+  @override
+  Future<void> startLive() async {}
+  @override
+  Future<void> pushLive(Uint8List pcm16) async {
+    liveChunks++;
+  }
+  @override
+  Future<void> stopLive() async { stopped = true; }
+  @override
+  Future<void> stop() async { stopped = true; }
 }
 
 class FailingRecorderMicrophone extends FakeMicrophone {
