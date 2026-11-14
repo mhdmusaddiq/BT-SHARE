@@ -16,9 +16,23 @@ function Test-InstalledJdk17([string]$Directory) {
     $java = Join-Path $Directory "bin\java.exe"
     $javac = Join-Path $Directory "bin\javac.exe"
     if (-not ((Test-Path -LiteralPath $java) -and (Test-Path -LiteralPath $javac))) { return $false }
-    $lines = & $java -version 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) { return $false }
-    return [bool]($lines -match '(?m)(?:openjdk|java) version "17(?:\.|")|(?:openjdk|java) 17(?:\.|\s)')
+    # Java writes -version to stderr. Avoid NativeCommandError in PS 5.
+    $start = [System.Diagnostics.ProcessStartInfo]::new($java)
+    $start.Arguments = "-version"
+    $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.CreateNoWindow = $true
+    $process = [System.Diagnostics.Process]::Start($start)
+    try {
+        $lines = $process.StandardError.ReadToEnd() + $process.StandardOutput.ReadToEnd()
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { return $false }
+    }
+    finally {
+        $process.Dispose()
+    }
+    return [bool]($lines -match '(?m)(?:openjdk|java) version "17(?:\\.|")|(?:openjdk|java) 17(?:\\.|\\s)')
 }
 
 $candidates = [System.Collections.Generic.List[string]]::new()
