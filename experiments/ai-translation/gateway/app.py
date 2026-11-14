@@ -19,6 +19,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import httpx
 
 from .protocol import ProtocolError, decode_frame, validate_start
+from .realtime_translation import realtime_caption_session
 
 AUDIO_BYTES_PER_SEC = 16000 * 2
 VOICE_THRESHOLD = 370
@@ -231,6 +232,17 @@ async def translate_socket(mobile: WebSocket):
     if not key:
         await send_error(mobile, "OpenAI API key is not configured on the gateway")
         await mobile.close(code=1011)
+        return
+
+    caption_engine = os.getenv("BT_AI_CAPTION_ENGINE", "segmented").lower()
+    if caption_engine not in ("segmented", "realtime"):
+        await send_error(mobile, "BT_AI_CAPTION_ENGINE must be segmented or realtime")
+        await mobile.close(code=1011)
+        return
+    if caption_engine == "realtime":
+        await realtime_caption_session(
+            mobile, key=key, source=source, target=target
+        )
         return
 
     tts_format = os.getenv("BT_AI_TTS_FORMAT", "mp3").lower()
