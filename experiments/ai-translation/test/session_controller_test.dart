@@ -179,6 +179,41 @@ void main() {
     c.dispose();
   });
 
+  test('realtime caption deltas update a single card without voice', () async {
+    final mic = FakeMicrophone();
+    final provider = ProgressProvider();
+    final voice = FakeVoice();
+    final c = TranslationSessionController(
+      microphone: mic, providerFactory: () => provider, voice: voice,
+    );
+    c.setCloudConsentGiven(true);
+    c.setAutoSpeak(true);
+    await c.start();
+    provider.send(TranslationSegment(
+      id: 'live-current', original: 'வண', translated: 'Hel',
+      receivedAt: DateTime.now(), isMock: false, captionOnly: true,
+    ));
+    await flushEvents();
+    expect(c.segments.length, 1);
+    expect(c.latest?.translated, 'Hel');
+    expect(c.latest?.captionOnly, isTrue);
+    expect(c.canPlaySegment(c.latest!), isFalse);
+    provider.send(TranslationSegment(
+      id: 'live-current', original: 'வணக்கம்', translated: 'Hello',
+      receivedAt: DateTime.now(), isMock: false, captionOnly: true,
+    ));
+    await flushEvents();
+    expect(c.segments.length, 1);
+    expect(c.latest?.original, 'வணக்கம்');
+    expect(c.latest?.translated, 'Hello');
+    expect(voice.played, 0);
+    await c.playSegment(c.latest!);
+    expect(c.playbackError, contains('Live caption mode'));
+    await c.stop();
+    expect(mic.recording, isFalse);
+    c.dispose();
+  });
+
   test('AI failure never changes local room-link status', () async {
     final mic = FakeMicrophone();
     final c = TranslationSessionController(

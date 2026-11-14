@@ -407,12 +407,29 @@ class _TranslationHomeState extends State<TranslationHome> {
                         ],
                       ),
                       const SizedBox(height: 6),
-                      SelectableText(segment.original),
+                      SelectableText(
+                        segment.original.isEmpty && segment.captionOnly
+                            ? 'Listening for source speech…'
+                            : segment.original,
+                      ),
                       const Divider(height: 22),
-                      Text('TRANSLATED · ${controller.target.label.toUpperCase()}', style: _eyebrow),
+                      Row(
+                        children: [
+                          Text(
+                            'TRANSLATED · ${controller.target.label.toUpperCase()}',
+                            style: _eyebrow,
+                          ),
+                          if (segment.captionOnly) ...[
+                            const SizedBox(width: 8),
+                            const _Pill(icon: Icons.bolt_rounded, text: 'LIVE'),
+                          ],
+                        ],
+                      ),
                       const SizedBox(height: 7),
                       SelectableText(
-                        segment.translated,
+                        segment.translated.isEmpty && segment.captionOnly
+                            ? 'Translating live…'
+                            : segment.translated,
                         style: const TextStyle(fontSize: 17, height: 1.4, color: _violet, fontWeight: FontWeight.w700),
                       ),
                       Align(
@@ -431,9 +448,11 @@ class _TranslationHomeState extends State<TranslationHome> {
                       ),
                       if (!segment.isMock && segment.voiceBytes == null)
                         Text(
-                          controller.status == AiSessionStatus.unavailable
-                              ? 'AI voice unavailable for this caption'
-                              : 'Generating AI voice…',
+                          segment.captionOnly
+                              ? 'Live captions only · Streaming voice comes next'
+                              : controller.status == AiSessionStatus.unavailable
+                                  ? 'AI voice unavailable for this caption'
+                                  : 'Generating AI voice…',
                           textAlign: TextAlign.right,
                           style: const TextStyle(color: _muted, fontSize: 11),
                         ),
@@ -482,9 +501,11 @@ class _TranslationHomeState extends State<TranslationHome> {
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
-                  controller.status == AiSessionStatus.unavailable
-                      ? 'AI voice is unavailable. Check the gateway error above.'
-                      : 'Waiting for generated AI voice…',
+                  segments.first.captionOnly
+                      ? 'Realtime captions active. Live voice will be added next.'
+                      : controller.status == AiSessionStatus.unavailable
+                          ? 'AI voice is unavailable. Check the gateway error above.'
+                          : 'Waiting for generated AI voice…',
                   style: const TextStyle(color: _muted, fontSize: 12),
                 ),
               ),

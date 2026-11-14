@@ -172,6 +172,7 @@ class TranslationSessionController extends ChangeNotifier {
               measuredLatencyMs: segment.measuredLatencyMs,
               voiceBytes: segment.voiceBytes ?? before.voiceBytes,
               audioMimeType: segment.audioMimeType ?? before.audioMimeType,
+              captionOnly: segment.captionOnly,
             );
             _segments[previousIndex] = visible;
           } else {
@@ -327,7 +328,9 @@ class TranslationSessionController extends ChangeNotifier {
     final current = _segments.where((entry) => entry.id == segment.id);
     final playable = current.isNotEmpty ? current.first : segment;
     if (!canPlaySegment(playable)) {
-      playbackError = 'AI voice is still generating. Try when Play voice is enabled.';
+      playbackError = playable.captionOnly
+          ? 'Live caption mode: streaming AI voice is a future phase.'
+          : 'AI voice is still generating. Try when Play voice is enabled.';
       _notify();
       return;
     }

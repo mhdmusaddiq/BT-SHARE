@@ -27,6 +27,7 @@ class GatewayTranslationProvider implements TranslationProvider {
   bool _connected = false;
   Completer<void>? _handshake;
   int _sequence = 0;
+  bool _captionOnly = false;
 
   @override
   bool get isMock => false;
@@ -140,6 +141,7 @@ class GatewayTranslationProvider implements TranslationProvider {
         if (decoded['source_mode'] != translationSourceMode) {
           throw const TranslationProviderFailure('Invalid source mode.');
         }
+        _captionOnly = decoded['caption_only'] == true;
         if (_handshake case final waiter?) {
           if (!waiter.isCompleted) waiter.complete();
         }
@@ -173,6 +175,7 @@ class GatewayTranslationProvider implements TranslationProvider {
             ? base64Decode(base64Voice)
             : null,
         audioMimeType: decoded['audio_mime_type'] as String?,
+        captionOnly: _captionOnly || decoded['caption_only'] == true,
       ));
     } on Object {
       if (!_events.isClosed) {

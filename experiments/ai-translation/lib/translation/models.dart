@@ -35,6 +35,7 @@ class TranslationSegment {
     this.measuredLatencyMs,
     this.voiceBytes,
     this.audioMimeType,
+    this.captionOnly = false,
   });
 
   final String id;
@@ -49,4 +50,6 @@ class TranslationSegment {
   final int? measuredLatencyMs;
   final Uint8List? voiceBytes;
   final String? audioMimeType;
+  /// Continuous Realtime subtitles: generated audio intentionally unavailable.
+  final bool captionOnly;
 }
