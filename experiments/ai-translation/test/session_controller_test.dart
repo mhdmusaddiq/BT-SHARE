@@ -142,6 +142,43 @@ void main() {
     c.dispose();
   });
 
+  test('early caption cannot play until generated voice arrives', () async {
+    final mic = FakeMicrophone();
+    final provider = ProgressProvider();
+    final voice = FakeVoice();
+    final c = TranslationSessionController(
+      microphone: mic,
+      providerFactory: () => provider,
+      voice: voice,
+    );
+    c.setCloudConsentGiven(true);
+    await c.start();
+    final early = TranslationSegment(
+      id: 'cloud-7', original: 'வணக்கம்', translated: 'Hello',
+      receivedAt: DateTime.now(), isMock: false,
+    );
+    provider.send(early);
+    await flushEvents();
+    expect(c.canPlaySegment(c.latest!), isFalse);
+    await c.playSegment(early);
+    expect(voice.played, 0);
+    expect(c.playbackError, contains('still generating'));
+    provider.send(TranslationSegment(
+      id: 'cloud-7', original: 'வணக்கம்', translated: 'Hello',
+      receivedAt: DateTime.now(), isMock: false,
+      voiceBytes: Uint8List.fromList([73, 68, 51]),
+      audioMimeType: 'audio/mpeg',
+    ));
+    await flushEvents();
+    expect(c.canPlaySegment(c.latest!), isTrue);
+    // Even if a caller retains the earlier caption object, play the new audio.
+    await c.playSegment(early);
+    expect(voice.played, 1);
+    expect(c.playbackError, isNull);
+    await c.stop();
+    c.dispose();
+  });
+
   test('AI failure never changes local room-link status', () async {
     final mic = FakeMicrophone();
     final c = TranslationSessionController(

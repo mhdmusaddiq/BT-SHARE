@@ -311,15 +311,30 @@ class TranslationSessionController extends ChangeNotifier {
     await start();
   }
 
+  bool canPlaySegment(TranslationSegment segment) =>
+      voiceEnabled &&
+      (segment.isMock || (segment.voiceBytes?.isNotEmpty ?? false));
+
   Future<void> playSegment(TranslationSegment segment) async {
     if (!voiceEnabled) return;
+    // An early-caption object can remain referenced in a tap callback while
+    // the gateway updates that same ID with TTS bytes. Resolve the latest.
+    final current = _segments.where((entry) => entry.id == segment.id);
+    final playable = current.isNotEmpty ? current.first : segment;
+    if (!canPlaySegment(playable)) {
+      playbackError = 'AI voice is still generating. Try when Play voice is enabled.';
+      _notify();
+      return;
+    }
     try {
       playbackError = null;
-      await voice.play(segment, target);
+      _notify();
+      await voice.play(playable, target);
     } on Object {
-      playbackError = segment.isMock
-          ? 'Device text-to-speech is not available for this language.'
-          : 'Provider voice unavailable. Configure its audio format.';
+      playbackError = playable.isMock
+          ? 'Device text-to-speech is unavailable for this language.'
+          : 'Generated audio could not play on this phone. '
+              'Check media volume, Bluetooth audio output and Android logs.';
       _notify();
     }
   }

@@ -34,6 +34,18 @@ class DeviceTranslatedVoiceOutput implements TranslatedVoiceOutput {
         segment.audioMimeType != 'audio/mpeg') {
       throw StateError('Unsupported gateway audio format.');
     }
+    // Voice capture is still active. Request Android media/speaker routing
+    // rather than relying on the current recorder or communication route.
+    await _player.setAudioContext(AudioContext(
+      android: AudioContextAndroid(
+        isSpeakerphoneOn: true,
+        audioMode: AndroidAudioMode.normal,
+        usageType: AndroidUsageType.media,
+        contentType: AndroidContentType.speech,
+        audioFocus: AndroidAudioFocus.gain,
+      ),
+    ));
+    await _player.setVolume(1.0);
     await _player.play(BytesSource(bytes));
   }
 

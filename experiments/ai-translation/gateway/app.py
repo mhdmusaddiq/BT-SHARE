@@ -117,7 +117,15 @@ class SpeechChunker:
 class TranslationPipeline:
     """Server-side AI key only, without leaking user content to logs."""
 
-    def __init__(self, key: str, client: httpx.AsyncClient | None = None):
+    def __init__(
+        self,
+        key: str,
+        client: httpx.AsyncClient | None = None,
+        audio_format: str = "mp3",
+    ):
+        if audio_format not in ("mp3", "wav"):
+            raise ValueError("Audio format must be mp3 or wav")
+        self.audio_format = audio_format
         self.client = client or httpx.AsyncClient(
             base_url="https://api.openai.com/v1",
             headers={"Authorization": f"Bearer {key}"},
@@ -188,7 +196,7 @@ class TranslationPipeline:
                 "model": "gpt-4o-mini-tts",
                 "voice": "alloy",
                 "input": translated,
-                "response_format": "wav",
+                "response_format": self.audio_format,
             },
         )
         speech.raise_for_status()
@@ -225,12 +233,17 @@ async def translate_socket(mobile: WebSocket):
         await mobile.close(code=1011)
         return
 
+    tts_format = os.getenv("BT_AI_TTS_FORMAT", "mp3").lower()
+    if tts_format not in ("mp3", "wav"):
+        await send_error(mobile, "Invalid BT_AI_TTS_FORMAT; use mp3 or wav")
+        await mobile.close(code=1011)
+        return
     latency_mode = os.getenv("BT_AI_LATENCY_MODE", "fast").lower()
     if latency_mode not in ("fast", "stable"):
         await send_error(mobile, "Invalid BT_AI_LATENCY_MODE; use fast or stable")
         await mobile.close(code=1011)
         return
-    pipeline = TranslationPipeline(key)
+    pipeline = TranslationPipeline(key, audio_format=tts_format)
     queue = asyncio.Queue(maxsize=3)
     chunker = SpeechChunker(mode=latency_mode)
     await mobile.send_json({
@@ -240,6 +253,7 @@ async def translate_socket(mobile: WebSocket):
         "target_language": target,
         "provider": "segmented-stt-translate-tts",
         "latency_mode": latency_mode,
+        "tts_audio_format": tts_format,
     })
 
     async def receive_microphone():
@@ -301,7 +315,9 @@ async def translate_socket(mobile: WebSocket):
                 "segment_id": segment_id,
                 "original_text": original,
                 "translated_text": translated,
-                "audio_mime_type": "audio/wav",
+                "audio_mime_type": (
+                    "audio/mpeg" if tts_format == "mp3" else "audio/wav"
+                ),
                 "translated_audio_base64": base64.b64encode(voice).decode("ascii"),
                 # Non-sensitive per-stage durations; Flutter can ignore extras.
                 "stage_timings_ms": timings,

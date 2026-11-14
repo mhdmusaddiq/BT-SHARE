@@ -294,3 +294,29 @@ Documentation:
 - https://developers.openai.com/api/docs/guides/text-to-speech
 - https://developers.openai.com/api/docs/guides/realtime-translation
 
+## Android AI voice playback improvement (2026-11-14)
+
+- Fast Mode delivers text before generated audio. The caption speaker button is
+  now disabled and displays **Generating AI voice…** until audio bytes for that
+  segment arrive. The Voice Output card also indicates when the latest speech
+  is pending; it does not silently fail if text is ready before TTS.
+- The Flutter controller resolves the freshest segment by ID before playback.
+  It now reports a playback warning if manual play is attempted before audio
+  exists or if Android media playback throws an exception.
+- Android playback requests the speaker/media route and full player volume
+  while recording, reducing confusion with the earpiece route. Headphones are
+  recommended to prevent translated speech from being re-recorded.
+- New Python Gateway defaults to **MP3** generated voice, supported by the
+  existing Flutter audio MIME handler. MP3 uses lower WebSocket bandwidth and
+  is broadly decoded by Android; this does not prove it resolves every device
+  playback issue. To use original WAV: `$env:BT_AI_TTS_FORMAT = "wav"`
+  **before starting** Uvicorn. Stop/restart the server when changing mode.
+- Under **Settings → Translated voice output**, turn ON, then enable
+  **Speak automatically** if voice should play without tapping. This setting
+  remains OFF by default to prevent microphone/audio feedback. Without it the
+  user must tap the speaker icon after **voice ready**.
+- Tests were added for early caption/no audio, later audio with same ID,
+  MP3 contract, WAV rollback. The project maintainer must run
+  `python -m pytest gateway -q`, `flutter analyze`, `flutter test`,
+  and check on a physical Redmi Note 9 Pro. The GitHub edit is not equivalent
+  to a successful device test. No OpenAI key is stored in app or git.

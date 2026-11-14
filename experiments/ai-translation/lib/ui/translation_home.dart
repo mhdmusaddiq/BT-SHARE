@@ -419,12 +419,24 @@ class _TranslationHomeState extends State<TranslationHome> {
                         alignment: Alignment.centerRight,
                         child: IconButton(
                           tooltip: 'Play translated voice',
-                          onPressed: controller.voiceEnabled
+                          onPressed: controller.canPlaySegment(segment)
                               ? () => controller.playSegment(segment)
                               : null,
-                          icon: const Icon(Icons.volume_up_outlined),
+                          icon: Icon(
+                            !segment.isMock && segment.voiceBytes == null
+                                ? Icons.hourglass_top_rounded
+                                : Icons.volume_up_outlined,
+                          ),
                         ),
                       ),
+                      if (!segment.isMock && segment.voiceBytes == null)
+                        Text(
+                          controller.status == AiSessionStatus.unavailable
+                              ? 'AI voice unavailable for this caption'
+                              : 'Generating AI voice…',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(color: _muted, fontSize: 11),
+                        ),
                     ],
                   ),
                 ),
@@ -448,7 +460,8 @@ class _TranslationHomeState extends State<TranslationHome> {
               children: [
                 IconButton.filledTonal(
                   tooltip: 'Play latest translated segment',
-                  onPressed: controller.voiceEnabled && segments.isNotEmpty
+                  onPressed: segments.isNotEmpty &&
+                          controller.canPlaySegment(segments.first)
                       ? () => controller.playSegment(segments.first)
                       : null,
                   icon: const Icon(Icons.play_arrow_rounded),
@@ -463,6 +476,18 @@ class _TranslationHomeState extends State<TranslationHome> {
                 Text(controller.voiceEnabled ? 'Enabled' : 'Muted', style: const TextStyle(color: _muted)),
               ],
             ),
+            if (!controller.mockMode && segments.isNotEmpty &&
+                !controller.canPlaySegment(segments.first) &&
+                controller.voiceEnabled)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  controller.status == AiSessionStatus.unavailable
+                      ? 'AI voice is unavailable. Check the gateway error above.'
+                      : 'Waiting for generated AI voice…',
+                  style: const TextStyle(color: _muted, fontSize: 12),
+                ),
+              ),
             if (controller.playbackError case final error?) ...[
               const SizedBox(height: 8),
               Text(error, style: const TextStyle(color: Color(0xFFB42318))),
@@ -510,7 +535,7 @@ class _TranslationHomeState extends State<TranslationHome> {
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Speak automatically'),
-                  subtitle: const Text('Avoid enabling near the microphone to reduce feedback'),
+                  subtitle: const Text('Play voice automatically when ready. Use headphones to avoid microphone feedback.'),
                   value: controller.autoSpeak,
                   onChanged: controller.voiceEnabled ? controller.setAutoSpeak : null,
                 ),

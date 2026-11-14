@@ -83,7 +83,7 @@ async def test_text_reaches_client_before_tts():
     assert set(metrics) == {"stt", "translation", "tts"}
     assert all(value >= 0 for value in metrics.values())
     assert (original, translated) == ("வணக்கம்", "Hello")
-    assert wav.startswith(b"RIFF")
+    assert wav.startswith(b"ID3")
 
 
 @pytest.mark.asyncio
@@ -98,7 +98,8 @@ async def test_fake_api_pipeline_returns_transcript_translation_and_voice():
                 "choices":[{"message":{"content":"Hello"}}]
             })
         if request.url.path.endswith("/audio/speech"):
-            return httpx.Response(200, content=b"RIFF" + bytes(100))
+            assert b'"response_format":"mp3"' in request.content
+            return httpx.Response(200, content=b"ID3" + bytes(100))
         return httpx.Response(404)
     async with httpx.AsyncClient(
         base_url="https://api.openai.com/v1",
@@ -108,7 +109,7 @@ async def test_fake_api_pipeline_returns_transcript_translation_and_voice():
         original, translated, audio = await pipeline.translate(
             array("h", [1500] * 32000).tobytes(), "ta", "en")
     assert (original, translated) == ("வணக்கம்", "Hello")
-    assert audio.startswith(b"RIFF")
+    assert audio.startswith(b"ID3")
     assert paths == [
         "/v1/audio/transcriptions", "/v1/chat/completions", "/v1/audio/speech"
     ]
