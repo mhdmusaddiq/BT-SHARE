@@ -9,7 +9,7 @@ This is a **proof of concept**, not a shipping app. The Dart and Android impleme
 - MIC ONLY, Tamil ↔ English, original transcript and translated caption history.
 - Captures PCM16 mono 16 kHz microphone chunks with runtime permission. No playback capture, no MEDIA input, no video capture.
 - `mock` demo is functional without cloud credentials, **but deliberately does not transcribe the user's words**. Every ~48,000 input PCM bytes trigger a pre-scripted fixture. All mock captions are labelled **MOCK**; device text-to-speech reading the fixture is **not cloud-generated model speech**.
-- `gateway` mode connects to the included experimental Python gateway under `gateway/`; cloud API access and real speech quality remain unverified. Supports translated audio returned as encoded WAV/MP3 and captions.
+- `gateway` mode connects to the included experimental Python gateway in `gateway/`. It returns real transcripts, translated captions and WAV TTS when the server has valid OpenAI API access. Supports translated audio returned as encoded WAV/MP3 and captions.
 - UI includes a duration timer, latency only when supplied as a measured gateway value, permission/error/retry states, voice/captions settings and accessible button labels.
 - AI session state and local original-audio link are independent. **This isolated module does not implement or prove local room audio distribution.**
 
@@ -64,7 +64,10 @@ Or error:
 
 This protocol is **provisional**: no central contract or other member module has been modified. Audio is sent ONLY after explicit MIC permission and translation start. Prefer binary audio frames, authenticated session refresh and server-side VAD before production. The gateway rejects MEDIA and includes a test-only token, basic rate bounds and cloud STT/translation/TTS. Production authentication, consent records, stronger limits and retention policies are still required.
 
-Use `local_gateway.json` with an existing temporary test token and the gateway's actual private-LAN IPv4 address (see C2 instructions below).
+Local development example:
+```powershell
+flutter run --dart-define=BT_AI_PROVIDER=gateway --dart-define=BT_AI_WS_URL=ws://10.0.2.2:8080/v1/stream
+```
 Use `wss://` outside localhost. **Never hardcode provider API credentials or long-lived tokens in `--dart-define`: build-time flags are recoverable from app binaries.** The optional `BT_AI_SESSION_TOKEN` is suitable only for throwaway/local development ephemeral sessions. Production needs a gateway-issued short-lived scoped token via a secure authentication flow.
 
 ## Layout
@@ -95,7 +98,7 @@ android/app/src/main/AndroidManifest.xml    permission and TTS-query additions
 - No foreground service or background capture yet; the app is for foreground testing.
 - No cross-device sync, host-transfer, room networking, local-original-audio transport or model inference engine here.
 - No VAD, jitter estimation, network QoS measurement, production audio feedback/echo control or continuous speech segmentation guaranteed.
-- The Gemini backend is implemented but **not yet validated against a live Gemini account or a phone**; translation, latency, Tamil speech and TTS quality remain unverified.
+- A Python OpenAI gateway implementation is included, but live translation, latency, Tamil speech quality and model TTS are **not verified**.
 - Device TTS availability varies for Tamil. When it is missing, playback error should be shown.
 - Sample fixture every 1.5 seconds is a **test harness**, never a model accuracy benchmark.
 - Do not persist, upload or commit recordings, transcripts or identifiers without consent and redaction.
@@ -110,113 +113,104 @@ Run `dart format --output=write lib test`, `flutter analyze`, `flutter test` and
 4. C4: Tamil→English and English→Tamil real utterances, record translation errors without storing raw private utterances.
 5. C5: API/Wi-Fi outage with independent original-local-audio stream installed by the integration owner. Without a working local-stream harness, independence is only unit-level, not hardware proof.
 
-Evidence C0–C5 lives at `../../evidence/ai-translation/`. C1 has user-reported 03:56 physical MOCK observations; C2 Gemini cloud processing is NOT_RUN_PHYSICAL.
+Evidence C0–C5 lives at `../../evidence/ai-translation/`. C1 has user-reported 03:56 MIC capture in MOCK mode; C2 real provider output remains NOT_VERIFIED.
 
 ## Contribution policy
 
 Work only on `Sihan-Member-3` and these two owned paths. Verify active branch and diff; never push to `development` or `main`; do not open/merge a PR without explicit request. Real integration must be reviewed by central coordinator.
 
-## C2 — Gemini Provider Migration (2026-11-13)
+## C2 — OpenAI API Gateway (restored 2026-11-14)
 
-**Provider:** Google Gemini API, NOT OpenAI. **Flutter protocol and code unchanged.**
+The user selected **OpenAI API** after a temporary Google Gemini migration.
+The active implementation uses three sequential calls per spoken utterance:
 
-Two Gemini API calls per speech segment:
-1. Gemini Flash audio understanding (default `gemini-3.8-flash`) accepts
-   16kHz WAV and returns JSON `original_text` + `translated_text`.
-2. Gemini Flash-Lite TTS (default `gemini-3.8-flash-lite-tts`) returns
-   a generated `audio/wav` clip (24kHz, mono) for the Flutter voice player.
+1. `gpt-transcribe` file transcription using a short microphone WAV segment
+2. `gpt-4.1-mini` Tamil ↔ English text translation
+3. `gpt-4o-mini-tts` spoken translation returned as WAV audio
 
-The Python gateway retains MIC-only input, start/audio/stop framing,
-source/target languages, consent, gateway token and /v1/stream endpoint.
-This is **segmented near-live translation**, NOT simultaneous interpretation.
-Speech is sent to Google only after user consent and a short pause.
-Model access, quotas and translations have not yet been confirmed on-device.
+OpenAI credentials live on the **Python gateway only**. Flutter UI, microphone,
+consent, PCM frame format, `/v1/stream`, segment JSON and WAV playback are
+unchanged. The Gemini-only module and fake API tests were removed; the original
+OpenAI mocked-contract test was restored.
 
-### Windows: Restart existing gateway with Gemini (PowerShell)
+**Important model lifecycle:** `gpt-4o-mini-tts` is scheduled to shut down
+2027-01-06 and `gpt-4.1-mini` 2027-01-14. This existing segmented proof of
+concept is usable before those dates if model access/quota permit. Upgrade
+later to a compatible supported future workflow; do not substitute a Realtime
+model ID directly into `/audio/speech`. This implementation is **not**
+simultaneous low-latency interpretation; it waits about 0.5s after speech.
 
-Terminal 1, in the project directory:
+### Restart on Windows after GitHub update
 
+In the existing Python server terminal, press **Ctrl+C** to stop the old server.
+
+**Terminal 1 — Python gateway (PowerShell):**
 ```powershell
 cd "G:\BT-Share\BT-SHARE\BT-SHARE\experiments\ai-translation"
-
-# Stop the OLD server with Ctrl+C in its existing terminal.
-# Activate the already-installed Python environment or use its full path.
-& "G:\BT-Share\.venv\Scripts\Activate.ps1"
-
+git status --short
 git pull --ff-only origin Sihan-Member-3
+& "G:\BT-Share\.venv\Scripts\Activate.ps1"
 python -m pip install -r .\gateway\requirements.txt
 python -m pytest gateway -q
 
-# Reuse the existing Flutter dev token; do not invent a different value.
+# Reuse SAME local Flutter dev token; do not rotate it accidentally.
 $config = Get-Content .\local_gateway.json -Raw | ConvertFrom-Json
 $env:BT_DEV_GATEWAY_TOKEN = $config.BT_AI_SESSION_TOKEN
 
-# Enter a NEW Gemini API key locally (not an OpenAI key).
-$secureKey = Read-Host "Enter Gemini API key" -AsSecureString
-$env:GEMINI_API_KEY = [System.Net.NetworkCredential]::new("", $secureKey).Password
-Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
-Remove-Variable secureKey -ErrorAction SilentlyContinue
+# Read OpenAI API key privately; do NOT print or paste it into chat.
+$key = Read-Host "Enter OpenAI API key" -AsSecureString
+$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new("", $key).Password
+Remove-Variable key -ErrorAction SilentlyContinue
+Remove-Item Env:GEMINI_API_KEY -ErrorAction SilentlyContinue
 
 python -m uvicorn gateway.app:app --host 0.0.0.0 --port 8098
 ```
 
-Create a Gemini API key from https://aistudio.google.com/apikey. The API key
-**must remain on the Python server**. Never enter it into `local_gateway.json`,
-Flutter dart-defines, GitHub or chat. A short-lived test-only token is already
-in the local JSON; avoid sharing the token or screenshotting the whole file.
-
-Optional environment model overrides (set BEFORE starting the server):
+**Terminal 2 — Android Flutter app:**
 ```powershell
-$env:GEMINI_TEXT_MODEL = "gemini-3.8-flash"
-$env:GEMINI_TTS_MODEL = "gemini-3.8-flash-lite-tts"
-$env:GEMINI_TTS_VOICE = "Kore"
-```
-These are defaults; model availability varies by key/account/region. Do not
-guess model access: inspect HTTP error status and Google AI Studio.
-
-Terminal 2, while server runs:
-```powershell
+cd "G:\BT-Share\BT-SHARE\BT-SHARE\experiments\ai-translation"
 Invoke-RestMethod http://127.0.0.1:8098/health/live
-# Expected status live / scope MIC_ONLY. This is not an AI readiness test.
 flutter analyze
 flutter test
 flutter devices
+powershell -ExecutionPolicy Bypass -File .\scripts\enable_debug_lan_ws.ps1
 flutter run -d f7d152a --dart-define-from-file=local_gateway.json
 ```
 
-If the phone already has the gateway-mode debug APK installed, it does not need
-to be rebuilt just because the Python AI provider changed. The app's
-`BT_AI_WS_URL` can continue to point at the same PC IP/port, e.g. the
-previously used hotspot address `10.198.218.82:8098`, **only if current
-`ipconfig` still shows that IPv4**. If it changed, update only the WS URL
-in `local_gateway.json` and rebuild the debug app.
+Replace `f7d152a` if `flutter devices` shows a different ID. Test your
+Redmi Note 9 Pro on the same trusted mobile hotspot. If the host's IP is still
+`10.198.218.82`, the existing local `BT_AI_WS_URL` may stay
+`ws://10.198.218.82:8098/v1/stream`; if changed, update just that URL and
+rebuild the debug app. The temporary token is stored in ignored
+`local_gateway.json` and must match the gateway's `BT_DEV_GATEWAY_TOKEN`.
+Never embed `OPENAI_API_KEY` in Flutter files, Git or dart-defines.
 
-The phone and laptop must be connected on the same trusted hotspot/private
-LAN. Debug cleartext HTTP/WS is **not production-safe**; restrict Windows
-Firewall to the mobile hotspot gateway and do not publish port 8098.
-For production use WSS/TLS and short-lived user-scoped authentication.
+This debug setup uses plain `ws://` over private LAN and a shared temporary
+token; **not production-secure**. Restrict Windows Firewall to local testing.
+Never open the service to the internet.
 
-### Test and acceptance
+### C2 on-phone verification
 
-- Test Tamil → English; speak 3–5 seconds; pause >= 0.5s.
-- Confirm the **actual original transcript** and **English translation**,
-  then tap the speaker to play generated English WAV.
-- Stop, switch English → Tamil and repeat. Assess Tamil pronunciation.
-- Confirm the Android microphone indicator turns off after Stop.
-- Record measured server processing milliseconds separately from actual
-  speech-end → caption/audio latency.
-- Never present old MOCK fixture captions as real AI translations.
+1. Consent to cloud microphone processing, select Tamil → English, press Start.
+2. Speak a short Tamil sentence, pause at least 0.5 seconds.
+3. Check **original Tamil transcript**, **English translated text** and tap
+   speaker to confirm the generated WAV voice is audible.
+4. Stop, change to English → Tamil and verify Tamil text and voice.
+5. Stop and confirm the Android microphone usage indicator disappears.
+6. Record actual errors and latency without logging private speech.
+7. `/health/live` only proves process liveness, not valid OpenAI billing or
+   model quota. An authenticated cloud call is still required for C2 PASS.
 
-If Gemini returns HTTP 400/403/404/429, inspect text/TTS model access,
-quota, API key and model name. The gateway intentionally does not expose
-provider response bodies or secrets in mobile errors or logs.
+Run `python -m pytest gateway -q` after the provider switch. Earlier 7
+Python and 7 Flutter tests passed in user-reported Windows logs for
+the original implementation; no new local run or real API request has
+been performed by the assistant in this change.
 
-**Status:** Python Gemini mock-transport tests are written but have not yet
-been executed on the user's Windows machine. No cloud Gemini request or
-real phone C2 PASS is claimed. The prior 7/7 pytest result belonged to
-the earlier OpenAI-oriented implementation; rerun `pytest gateway -q`.
+**API billing is separate from ChatGPT subscription billing.**
+Check API account credits and model access:
+https://platform.openai.com/settings/organization/billing/overview
 
-Reference:
-- https://ai.google.dev/api/generate-content
-- https://ai.google.dev/gemini-api/docs/speech-generation
-- https://ai.google.dev/gemini-api/docs/api-key
+References:
+- https://developers.openai.com/api/docs/guides/speech-to-text
+- https://developers.openai.com/api/docs/guides/text-to-speech
+- https://developers.openai.com/api/docs/deprecations
