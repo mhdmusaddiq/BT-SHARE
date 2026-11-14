@@ -222,9 +222,10 @@ class TranslationSessionController extends ChangeNotifier {
       // independent interfaces. Keep an explicitly typed reference for
       // Dart flow analysis instead of relying on intersection promotion.
       final StreamingTranslationProvider? streamingProvider =
-          provider is StreamingTranslationProvider
-              ? provider as StreamingTranslationProvider
-              : null;
+          switch (provider) {
+            StreamingTranslationProvider stream => stream,
+            _ => null,
+          };
       if (streamingProvider != null &&
           streamingProvider.supportsStreamingAudio) {
         streamingAudioAvailable = true;
