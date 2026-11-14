@@ -81,6 +81,21 @@ void main() {
     c.dispose();
   });
 
+  test('gateway success then recorder error shows microphone-specific reason', () async {
+    final mic = FailingRecorderMicrophone();
+    final c = TranslationSessionController(
+      microphone: mic,
+      providerFactory: GatewayReadyProvider.new,
+      voice: FakeVoice(),
+    );
+    c.setCloudConsentGiven(true);
+    await c.start();
+    expect(c.status, AiSessionStatus.unavailable);
+    expect(c.errorMessage, contains('Gateway connected, but microphone'));
+    expect(c.errorMessage, isNot(contains('Android hardware-specific')));
+    c.dispose();
+  });
+
   test('AI failure never changes local room-link status', () async {
     final mic = FakeMicrophone();
     final c = TranslationSessionController(
@@ -92,9 +107,33 @@ void main() {
     c.localAudioStatus = LocalAudioLinkStatus.connected;
     await c.start();
     expect(c.status, AiSessionStatus.unavailable);
+    expect(c.errorMessage, 'offline');
     expect(c.localAudioStatus, LocalAudioLinkStatus.connected);
     c.dispose();
   });
+}
+
+class FailingRecorderMicrophone extends FakeMicrophone {
+  @override
+  Future<Stream<Uint8List>> startPcm16() {
+    throw StateError('Android hardware-specific exception');
+  }
+}
+
+class GatewayReadyProvider implements TranslationProvider {
+  @override
+  bool get isMock => false;
+  @override
+  Stream<TranslationSegment> get segments => const Stream.empty();
+  @override
+  Future<void> connect({
+    required TranslationLanguage source,
+    required TranslationLanguage target,
+  }) async {}
+  @override
+  Future<void> sendMicrophonePcm(Uint8List data) async {}
+  @override
+  Future<void> close() async {}
 }
 
 class FailingProvider implements TranslationProvider {

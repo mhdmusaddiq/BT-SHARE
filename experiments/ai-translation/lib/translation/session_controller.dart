@@ -139,6 +139,7 @@ class TranslationSessionController extends ChangeNotifier {
     status = AiSessionStatus.connecting;
     _notify();
 
+    var startupPhase = 'permission';
     try {
       final authorized = await microphone.requestPermission();
       if (!_current(run)) return;
@@ -149,6 +150,7 @@ class TranslationSessionController extends ChangeNotifier {
         return;
       }
 
+      startupPhase = 'configuration';
       final provider = providerFactory();
       _provider = provider;
       mockMode = provider.isMock;
@@ -194,11 +196,13 @@ class TranslationSessionController extends ChangeNotifier {
           }
         },
       );
+      startupPhase = 'gateway';
       await provider.connect(source: source, target: target);
       if (!_current(run)) return;
 
       // Only start capturing AFTER the AI gateway is available. The local
       // room's own audio path remains separate and is never modified here.
+      startupPhase = 'microphone';
       final input = await microphone.startPcm16();
       if (!_current(run)) {
         await microphone.stop();
@@ -232,9 +236,24 @@ class TranslationSessionController extends ChangeNotifier {
         },
       );
       _notify();
-    } on Object {
+    } on Object catch (error) {
       if (_current(run)) {
-        await _fail(run, 'Unable to start microphone translation.');
+        // Expose a safe, actionable startup stage. Never show raw platform
+        // exceptions, vendor responses, API keys or gateway credentials.
+        final message = switch (startupPhase) {
+          'permission' => 'Unable to check microphone permission on Android.',
+          'configuration' => error is TranslationProviderFailure
+              ? error.message
+              : 'Invalid AI provider configuration.',
+          'gateway' => error is TranslationProviderFailure
+              ? error.message
+              : 'Unable to connect to the AI gateway.',
+          'microphone' =>
+            'Gateway connected, but microphone recording could not start. '
+                'Check microphone permission and try again.',
+          _ => 'Unable to start microphone translation.',
+        };
+        await _fail(run, message);
       }
     } finally {
       _starting = false;

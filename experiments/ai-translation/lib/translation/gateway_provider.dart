@@ -60,10 +60,12 @@ class GatewayTranslationProvider implements TranslationProvider {
         'Use wss:// or explicitly enable debug-only private-LAN ws://.',
       );
     }
+    var connectionPhase = 'websocket';
     try {
       final channel = WebSocketChannel.connect(endpoint);
       _channel = channel;
       await channel.ready.timeout(const Duration(seconds: 12));
+      connectionPhase = 'handshake';
       _handshake = Completer<void>();
       _subscription = channel.stream.listen(
         _onMessage,
@@ -109,10 +111,22 @@ class GatewayTranslationProvider implements TranslationProvider {
       // No microphone capture before authenticated AI session is ready.
       await _handshake!.future.timeout(const Duration(seconds: 20));
       _connected = true;
-    } on Object catch (_) {
+    } on TranslationProviderFailure {
       _connected = false;
-      throw const TranslationProviderFailure(
-        'Unable to connect to the translation gateway.',
+      rethrow;
+    } on TimeoutException {
+      _connected = false;
+      throw TranslationProviderFailure(
+        connectionPhase == 'websocket'
+            ? 'Gateway WebSocket connection timed out. Check mobile hotspot and port 8098.'
+            : 'Gateway handshake timed out. Check the Python server and dev session token.',
+      );
+    } on Object {
+      _connected = false;
+      throw TranslationProviderFailure(
+        connectionPhase == 'websocket'
+            ? 'Gateway WebSocket connection failed. Check hotspot IP, port 8098 and debug network access.'
+            : 'Gateway handshake failed. Check local_gateway.json token and Python server logs.',
       );
     }
   }
