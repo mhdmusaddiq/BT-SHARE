@@ -218,11 +218,18 @@ class TranslationSessionController extends ChangeNotifier {
       startupPhase = 'gateway';
       await provider.connect(source: source, target: target);
       if (!_current(run)) return;
-      if (provider is StreamingTranslationProvider &&
-          provider.supportsStreamingAudio) {
+      // `TranslationProvider` and `StreamingTranslationProvider` are
+      // independent interfaces. Keep an explicitly typed reference for
+      // Dart flow analysis instead of relying on intersection promotion.
+      final StreamingTranslationProvider? streamingProvider =
+          provider is StreamingTranslationProvider
+              ? provider as StreamingTranslationProvider
+              : null;
+      if (streamingProvider != null &&
+          streamingProvider.supportsStreamingAudio) {
         streamingAudioAvailable = true;
-        _liveAudioSubscription = provider.translatedPcmChunks.listen(
-          (bytes) {
+        _liveAudioSubscription = streamingProvider.translatedPcmChunks.listen(
+          (Uint8List bytes) {
             if (!_current(run) || !voiceEnabled || !autoSpeak ||
                 _livePlaybackFailed || voice is! LiveTranslatedVoiceOutput) {
               return;
@@ -239,7 +246,9 @@ class TranslationSessionController extends ChangeNotifier {
             _queuedAudioBytes += bytes.length;
             _liveAudioTail = _liveAudioTail.then((_) async {
               if (!_current(run) || !voiceEnabled || !autoSpeak ||
-                  _livePlaybackFailed) return;
+                  _livePlaybackFailed) {
+                return;
+              }
               try {
                 await (voice as LiveTranslatedVoiceOutput).pushLive(bytes);
               } on Object {

@@ -16,6 +16,9 @@ class FakeRealtimeUpstream:
         self.events = asyncio.Queue()
         self.sent = []
         self.audio_frames = 0
+        # Invalid provider voice delta intentionally tests that caption-only
+        # mode ignores audio. The audio-streaming fixture overrides this.
+        self.send_dummy_invalid_audio = True
 
     async def __aenter__(self):
         return self
@@ -52,10 +55,12 @@ class FakeRealtimeUpstream:
                     "type": "session.output_transcript.delta",
                     "delta": "lo", "elapsed_ms": 400,
                 }))
-                # Deliberately send audio too: Phase 1 must discard it.
-                await self.events.put(json.dumps({
-                    "type": "session.output_audio.delta", "delta": "AA=="
-                }))
+                # Phase 1 must discard even invalid audio rather than
+                # interpreting it; Phase 2 fake sends only valid PCM16.
+                if self.send_dummy_invalid_audio:
+                    await self.events.put(json.dumps({
+                        "type": "session.output_audio.delta", "delta": "AA=="
+                    }))
         elif event["type"] == "session.close":
             await self.events.put(json.dumps({"type": "session.closed"}))
 
@@ -154,6 +159,10 @@ def test_realtime_rejects_media_even_when_realtime_enabled(monkeypatch):
 
 
 class FakeRealtimeWithAudio(FakeRealtimeUpstream):
+    def __init__(self):
+        super().__init__()
+        self.send_dummy_invalid_audio = False
+
     async def send(self, message):
         event = json.loads(message)
         # Append audio after the first frame while connection remains active.
