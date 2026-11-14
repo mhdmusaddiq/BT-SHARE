@@ -17,6 +17,12 @@ abstract class TranslationProvider {
   Future<void> close();
 }
 
+/// Optional live PCM output alongside ordinary caption segments.
+abstract class StreamingTranslationProvider {
+  bool get supportsStreamingAudio;
+  Stream<Uint8List> get translatedPcmChunks;
+}
+
 class TranslationProviderFailure implements Exception {
   const TranslationProviderFailure(this.message);
   final String message;

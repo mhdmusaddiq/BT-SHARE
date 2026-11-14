@@ -48,6 +48,11 @@ class TranslationSessionController extends ChangeNotifier {
   TranslationProvider? _provider;
   StreamSubscription<Uint8List>? _micSubscription;
   StreamSubscription<TranslationSegment>? _segmentSubscription;
+  StreamSubscription<Uint8List>? _liveAudioSubscription;
+  Future<void> _liveAudioTail = Future<void>.value();
+  int _queuedAudioBytes = 0;
+  bool streamingAudioAvailable = false;
+  bool _livePlaybackFailed = false;
   Timer? _pulse;
   int _generation = 0;
   bool _disposed = false;
@@ -107,6 +112,9 @@ class TranslationSessionController extends ChangeNotifier {
 
   void setAutoSpeak(bool enabled) {
     autoSpeak = enabled;
+    if (!enabled && streamingAudioAvailable) {
+      unawaited(voice.stop());
+    }
     _notify();
   }
 
@@ -136,6 +144,10 @@ class TranslationSessionController extends ChangeNotifier {
     endedAt = null;
     startedAt = null;
     receivedMicChunks = 0;
+    streamingAudioAvailable = false;
+    _livePlaybackFailed = false;
+    _queuedAudioBytes = 0;
+    _liveAudioTail = Future<void>.value();
     status = AiSessionStatus.connecting;
     _notify();
 
@@ -173,6 +185,7 @@ class TranslationSessionController extends ChangeNotifier {
               voiceBytes: segment.voiceBytes ?? before.voiceBytes,
               audioMimeType: segment.audioMimeType ?? before.audioMimeType,
               captionOnly: segment.captionOnly,
+              streamingAudio: segment.streamingAudio,
             );
             _segments[previousIndex] = visible;
           } else {
@@ -205,6 +218,51 @@ class TranslationSessionController extends ChangeNotifier {
       startupPhase = 'gateway';
       await provider.connect(source: source, target: target);
       if (!_current(run)) return;
+      if (provider is StreamingTranslationProvider &&
+          provider.supportsStreamingAudio) {
+        streamingAudioAvailable = true;
+        _liveAudioSubscription = provider.translatedPcmChunks.listen(
+          (bytes) {
+            if (!_current(run) || !voiceEnabled || !autoSpeak ||
+                _livePlaybackFailed || voice is! LiveTranslatedVoiceOutput) {
+              return;
+            }
+            // Bound future work queued on Dart isolate and Android audio sink.
+            if (_queuedAudioBytes + bytes.length > 120000) {
+              _livePlaybackFailed = true;
+              playbackError = 'Live voice fell behind. Restart translation '
+                  'or disable Speak automatically.';
+              _notify();
+              unawaited(voice.stop());
+              return;
+            }
+            _queuedAudioBytes += bytes.length;
+            _liveAudioTail = _liveAudioTail.then((_) async {
+              if (!_current(run) || !voiceEnabled || !autoSpeak ||
+                  _livePlaybackFailed) return;
+              try {
+                await (voice as LiveTranslatedVoiceOutput).pushLive(bytes);
+              } on Object {
+                _livePlaybackFailed = true;
+                playbackError = 'Live PCM playback failed on this device. '
+                    'Turn off automatic voice or switch to segmented mode.';
+                _notify();
+                await voice.stop();
+              }
+            }).whenComplete(() {
+              _queuedAudioBytes -= bytes.length;
+            });
+          },
+          onError: (Object error) {
+            if (_current(run)) {
+              _livePlaybackFailed = true;
+              playbackError = 'Realtime voice packet error.';
+              _notify();
+              unawaited(voice.stop());
+            }
+          },
+        );
+      }
 
       // Only start capturing AFTER the AI gateway is available. The local
       // room's own audio path remains separate and is never modified here.
@@ -281,6 +339,10 @@ class TranslationSessionController extends ChangeNotifier {
         // Best-effort cleanup, preserve the primary session error.
       }
     }
+    await _liveAudioSubscription?.cancel();
+    _liveAudioSubscription = null;
+    await _liveAudioTail.catchError((Object _) {});
+    _queuedAudioBytes = 0;
     await _segmentSubscription?.cancel();
     _segmentSubscription = null;
     final provider = _provider;
@@ -318,7 +380,7 @@ class TranslationSessionController extends ChangeNotifier {
   }
 
   bool canPlaySegment(TranslationSegment segment) =>
-      voiceEnabled &&
+      voiceEnabled && !segment.streamingAudio &&
       (segment.isMock || (segment.voiceBytes?.isNotEmpty ?? false));
 
   Future<void> playSegment(TranslationSegment segment) async {
@@ -328,9 +390,12 @@ class TranslationSessionController extends ChangeNotifier {
     final current = _segments.where((entry) => entry.id == segment.id);
     final playable = current.isNotEmpty ? current.first : segment;
     if (!canPlaySegment(playable)) {
-      playbackError = playable.captionOnly
-          ? 'Live caption mode: streaming AI voice is a future phase.'
-          : 'AI voice is still generating. Try when Play voice is enabled.';
+      playbackError = playable.streamingAudio
+          ? 'Live voice plays automatically while translating; '
+              'enable Speak automatically in Settings.'
+          : playable.captionOnly
+              ? 'Live caption mode: no streaming voice enabled on server.'
+              : 'AI voice is still generating. Try when Play voice is enabled.';
       _notify();
       return;
     }

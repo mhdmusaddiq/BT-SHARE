@@ -9,7 +9,8 @@ import 'translation_provider.dart';
 
 /// BT SHARE MIC-only segmented translation adapter. Vendor credentials
 /// remain on the gateway server, never inside the Flutter application.
-class GatewayTranslationProvider implements TranslationProvider {
+class GatewayTranslationProvider
+    implements TranslationProvider, StreamingTranslationProvider {
   GatewayTranslationProvider({
     required this.endpoint,
     this.ephemeralSessionToken = '',
@@ -22,12 +23,22 @@ class GatewayTranslationProvider implements TranslationProvider {
 
   final StreamController<TranslationSegment> _events =
       StreamController<TranslationSegment>.broadcast();
+  final StreamController<Uint8List> _audio =
+      StreamController<Uint8List>.broadcast();
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
   bool _connected = false;
   Completer<void>? _handshake;
   int _sequence = 0;
   bool _captionOnly = false;
+  bool _streamingAudio = false;
+  int _audioSequence = 0;
+
+  @override
+  bool get supportsStreamingAudio => _streamingAudio;
+
+  @override
+  Stream<Uint8List> get translatedPcmChunks => _audio.stream;
 
   @override
   bool get isMock => false;
@@ -142,6 +153,7 @@ class GatewayTranslationProvider implements TranslationProvider {
           throw const TranslationProviderFailure('Invalid source mode.');
         }
         _captionOnly = decoded['caption_only'] == true;
+        _streamingAudio = decoded['streaming_audio'] == true;
         if (_handshake case final waiter?) {
           if (!waiter.isCompleted) waiter.complete();
         }
@@ -155,6 +167,26 @@ class GatewayTranslationProvider implements TranslationProvider {
           if (!waiter.isCompleted) waiter.completeError(reason);
         }
         if (!_events.isClosed) _events.addError(reason);
+        return;
+      }
+      if (decoded['type'] == 'audio_delta') {
+        if (!_streamingAudio || _audio.isClosed) return;
+        final next = decoded['sequence'];
+        final rawVoice = decoded['pcm16_base64'];
+        if (decoded['source_mode'] != translationSourceMode ||
+            decoded['sample_rate_hz'] != 24000 ||
+            decoded['channels'] != 1 ||
+            decoded['encoding'] != 'pcm_s16le' ||
+            next is! int || next != _audioSequence + 1 ||
+            rawVoice is! String || rawVoice.length > 15000) {
+          throw const TranslationProviderFailure('Invalid live voice packet.');
+        }
+        final bytes = base64Decode(rawVoice);
+        if (bytes.isEmpty || bytes.length > 9600 || bytes.length.isOdd) {
+          throw const TranslationProviderFailure('Invalid live voice PCM16 data.');
+        }
+        _audioSequence = next;
+        _audio.add(bytes);
         return;
       }
       if (decoded['type'] != 'segment') return;
@@ -176,13 +208,12 @@ class GatewayTranslationProvider implements TranslationProvider {
             : null,
         audioMimeType: decoded['audio_mime_type'] as String?,
         captionOnly: _captionOnly || decoded['caption_only'] == true,
+        streamingAudio: _streamingAudio,
       ));
     } on Object {
-      if (!_events.isClosed) {
-        _events.addError(
-          const TranslationProviderFailure('Invalid gateway response.'),
-        );
-      }
+      final reason = const TranslationProviderFailure('Invalid gateway response.');
+      if (!_audio.isClosed) _audio.addError(reason);
+      if (!_events.isClosed) _events.addError(reason);
     }
   }
 
@@ -215,6 +246,7 @@ class GatewayTranslationProvider implements TranslationProvider {
     }
     await _subscription?.cancel();
     await _channel?.sink.close();
+    await _audio.close();
     await _events.close();
   }
 }

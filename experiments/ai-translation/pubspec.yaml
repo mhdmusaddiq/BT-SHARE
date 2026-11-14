@@ -13,6 +13,7 @@ dependencies:
   permission_handler: 12.0.3
   flutter_tts: ^4.2.5
   audioplayers: ^6.8.1
+  audio_stream_player: ^1.1.0
   web_socket_channel: ^3.0.3
 
 dev_dependencies:

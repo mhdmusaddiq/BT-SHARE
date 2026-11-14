@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:audio_stream_player/audio_stream_player.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
@@ -9,9 +12,18 @@ abstract class TranslatedVoiceOutput {
   Future<void> dispose();
 }
 
-class DeviceTranslatedVoiceOutput implements TranslatedVoiceOutput {
+/// Optional 24kHz mono PCM16 playback stream for Realtime Translation.
+abstract class LiveTranslatedVoiceOutput {
+  Future<void> startLive();
+  Future<void> pushLive(Uint8List pcm16);
+  Future<void> stopLive();
+}
+
+class DeviceTranslatedVoiceOutput
+    implements TranslatedVoiceOutput, LiveTranslatedVoiceOutput {
   final FlutterTts _tts = FlutterTts();
   final AudioPlayer _player = AudioPlayer();
+  AudioStreamPlayer? _live;
 
   @override
   Future<void> play(
@@ -50,7 +62,43 @@ class DeviceTranslatedVoiceOutput implements TranslatedVoiceOutput {
   }
 
   @override
+  Future<void> startLive() async {
+    if (_live != null) return;
+    _live = await AudioStreamPlayer.create(
+      sampleRate: 24000, channels: 1, format: PcmFormat.s16le,
+    );
+    await _live!.play();
+  }
+
+  @override
+  Future<void> pushLive(Uint8List pcm16) async {
+    if (pcm16.isEmpty || pcm16.length.isOdd) {
+      throw StateError('Invalid realtime PCM16 data.');
+    }
+    await startLive();
+    final live = _live!;
+    // Bounded playback buffering; never store minutes of stale speech.
+    final buffered = await live.bufferedDuration();
+    if (buffered > const Duration(seconds: 2)) {
+      await stopLive();
+      throw StateError('Translated audio buffer exceeded 2 seconds.');
+    }
+    await live.feed(pcm16);
+  }
+
+  @override
+  Future<void> stopLive() async {
+    final live = _live;
+    _live = null;
+    if (live != null) {
+      await live.stop();
+      await live.dispose();
+    }
+  }
+
+  @override
   Future<void> stop() async {
+    await stopLive();
     await _tts.stop();
     await _player.stop();
   }

@@ -36,6 +36,7 @@ class TranslationSegment {
     this.voiceBytes,
     this.audioMimeType,
     this.captionOnly = false,
+    this.streamingAudio = false,
   });
 
   final String id;
@@ -52,4 +53,6 @@ class TranslationSegment {
   final String? audioMimeType;
   /// Continuous Realtime subtitles: generated audio intentionally unavailable.
   final bool captionOnly;
+  /// Live PCM audio is sent separately, not replayable via caption button.
+  final bool streamingAudio;
 }

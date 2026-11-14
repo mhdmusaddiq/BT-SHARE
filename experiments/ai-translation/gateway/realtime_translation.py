@@ -7,6 +7,7 @@ No private text, audio, or OpenAI credentials are logged or persisted.
 """
 import asyncio
 import base64
+import binascii
 import json
 import os
 import time
@@ -24,6 +25,8 @@ INPUT_FRAME_BYTES = 9600  # 200ms, 24 kHz, PCM16 mono.
 MAX_SESSION_SECONDS = 600
 MAX_CAPTION_CHARS = 1400
 UI_UPDATE_SECONDS = 0.08
+MAX_OUTPUT_DELTA_BYTES = 192_000  # max 4s of audio in one upstream event
+OUTPUT_FRAME_BYTES = 9600  # relay 200ms PCM16 chunks, prevent huge phone JSON
 
 
 class LiveCaptionState:
@@ -84,6 +87,13 @@ async def realtime_caption_session(
     """Called only after the existing MIC-only token and start validation."""
     receiver = None
     captions = None
+    # Opt-in per Python gateway process. Default remains proven caption-only.
+    voice_flag = os.getenv("BT_AI_REALTIME_VOICE", "0").lower()
+    if voice_flag not in ("0", "1"):
+        await _send_safe_error(phone, "Invalid BT_AI_REALTIME_VOICE; use 0 or 1")
+        await phone.close(code=1011)
+        return
+    streaming_voice = voice_flag == "1"
     try:
         async with connect(
             OPENAI_TRANSLATION_URL,
@@ -130,8 +140,11 @@ async def realtime_caption_session(
                 "source_mode": "MIC",
                 "source_language": source,
                 "target_language": target,
-                "provider": "realtime-translation-captions",
-                "caption_only": True,
+                "provider": "realtime-translation-captions-and-voice"
+                    if streaming_voice else "realtime-translation-captions",
+                "caption_only": not streaming_voice,
+                "streaming_audio": streaming_voice,
+                "audio_sample_rate_hz": 24000 if streaming_voice else None,
                 "audio_frame_ms": 200,
             })
 
@@ -175,6 +188,7 @@ async def realtime_caption_session(
                 state = LiveCaptionState()
                 last_emit = 0.0
                 last_audio_ms = None
+                audio_sequence = 0
                 while True:
                     # Coalesce bursts to ~12 UI updates/second, but flush
                     # the trailing fragment even if no new events arrive.
@@ -205,9 +219,34 @@ async def realtime_caption_session(
                         if state.dirty:
                             await phone.send_json(state.payload(last_audio_ms))
                         return
-                    # Phase 1 intentionally discards translation audio
-                    # (no decoder, buffering or speaker feedback yet).
                     if kind == "session.output_audio.delta":
+                        if not streaming_voice:
+                            continue  # Phase 1 caption-only preserves old path
+                        if (event.get("sample_rate", 24000) != 24000
+                                or event.get("channels", 1) != 1
+                                or event.get("format", "pcm16") != "pcm16"):
+                            raise ProtocolError("Unsupported realtime output audio")
+                        encoded = event.get("delta")
+                        if not isinstance(encoded, str) or len(encoded) > 260_000:
+                            raise ProtocolError("Oversized realtime audio delta")
+                        try:
+                            pcm = base64.b64decode(encoded, validate=True)
+                        except (binascii.Error, ValueError) as exc:
+                            raise ProtocolError("Invalid realtime audio delta") from exc
+                        if not pcm or len(pcm) % 2 or len(pcm) > MAX_OUTPUT_DELTA_BYTES:
+                            raise ProtocolError("Invalid realtime PCM16 samples")
+                        for offset in range(0, len(pcm), OUTPUT_FRAME_BYTES):
+                            chunk = pcm[offset:offset + OUTPUT_FRAME_BYTES]
+                            audio_sequence += 1
+                            await phone.send_json({
+                                "type": "audio_delta",
+                                "source_mode": "MIC",
+                                "sequence": audio_sequence,
+                                "sample_rate_hz": 24000,
+                                "channels": 1,
+                                "encoding": "pcm_s16le",
+                                "pcm16_base64": base64.b64encode(chunk).decode("ascii"),
+                            })
                         continue
                     if state.accept(kind, event.get("delta")):
                         if type(event.get("elapsed_ms")) is int:

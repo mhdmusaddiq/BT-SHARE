@@ -448,9 +448,11 @@ class _TranslationHomeState extends State<TranslationHome> {
                       ),
                       if (!segment.isMock && segment.voiceBytes == null)
                         Text(
-                          segment.captionOnly
-                              ? 'Live captions only · Streaming voice comes next'
-                              : controller.status == AiSessionStatus.unavailable
+                          segment.streamingAudio
+                              ? 'Live voice streams automatically · no replay'
+                              : segment.captionOnly
+                                  ? 'Live captions only · Enable realtime voice on server'
+                                  : controller.status == AiSessionStatus.unavailable
                                   ? 'AI voice unavailable for this caption'
                                   : 'Generating AI voice…',
                           textAlign: TextAlign.right,
@@ -478,7 +480,9 @@ class _TranslationHomeState extends State<TranslationHome> {
             Row(
               children: [
                 IconButton.filledTonal(
-                  tooltip: 'Play latest translated segment',
+                  tooltip: controller.streamingAudioAvailable
+                      ? 'Realtime voice is not replayable; use Speak automatically'
+                      : 'Play latest translated segment',
                   onPressed: segments.isNotEmpty &&
                           controller.canPlaySegment(segments.first)
                       ? () => controller.playSegment(segments.first)
@@ -501,9 +505,13 @@ class _TranslationHomeState extends State<TranslationHome> {
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
-                  segments.first.captionOnly
-                      ? 'Realtime captions active. Live voice will be added next.'
-                      : controller.status == AiSessionStatus.unavailable
+                  segments.first.streamingAudio
+                      ? controller.autoSpeak
+                          ? 'Live voice streaming automatically when audio arrives.'
+                          : 'Enable Speak automatically in Settings for live voice.'
+                      : segments.first.captionOnly
+                          ? 'Realtime captions active. Voice is off on gateway.'
+                          : controller.status == AiSessionStatus.unavailable
                           ? 'AI voice is unavailable. Check the gateway error above.'
                           : 'Waiting for generated AI voice…',
                   style: const TextStyle(color: _muted, fontSize: 12),
