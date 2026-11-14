@@ -21,6 +21,68 @@ def test_only_silence_is_not_uploaded():
         assert chunker.add(bytes(3200)) == []
     assert chunker.finish() is None
 
+def test_fast_mode_releases_after_300ms_silence(monkeypatch):
+    monkeypatch.setenv("BT_AI_LATENCY_MODE", "fast")
+    chunker = SpeechChunker()
+    voiced = array("h", [1500] * 1600).tobytes()
+    for _ in range(12):
+        assert chunker.add(voiced) == []
+    for _ in range(2):
+        assert chunker.add(bytes(3200)) == []
+    assert len(chunker.add(bytes(3200))) == 1
+
+
+def test_stable_mode_preserves_500ms_pause():
+    chunker = SpeechChunker(mode="stable")
+    voiced = array("h", [1500] * 1600).tobytes()
+    for _ in range(12):
+        assert chunker.add(voiced) == []
+    for _ in range(4):
+        assert chunker.add(bytes(3200)) == []
+    assert len(chunker.add(bytes(3200))) == 1
+
+
+def test_bad_latency_mode_fails_safe():
+    with pytest.raises(ValueError):
+        SpeechChunker(mode="extreme")
+
+
+@pytest.mark.asyncio
+async def test_text_reaches_client_before_tts():
+    events = []
+
+    def respond(request):
+        if request.url.path.endswith("/audio/transcriptions"):
+            events.append("stt")
+            return httpx.Response(200, json={"text": "வணக்கம்"})
+        if request.url.path.endswith("/chat/completions"):
+            events.append("translation")
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": "Hello"}}]
+            })
+        if request.url.path.endswith("/audio/speech"):
+            events.append("tts")
+            return httpx.Response(200, content=b"RIFF" + bytes(100))
+        return httpx.Response(404)
+
+    async def on_text(original, translated):
+        events.append("caption")
+        assert (original, translated) == ("வணக்கம்", "Hello")
+
+    async with httpx.AsyncClient(
+        base_url="https://api.openai.com/v1",
+        transport=httpx.MockTransport(respond),
+    ) as client:
+        p = TranslationPipeline("fake-test-token", client)
+        original, translated, wav = await p.translate(
+            array("h", [1500] * 32000).tobytes(), "ta", "en",
+            on_text=on_text,
+        )
+    assert events == ["stt", "translation", "caption", "tts"]
+    assert (original, translated) == ("வணக்கம்", "Hello")
+    assert wav.startswith(b"RIFF")
+
+
 @pytest.mark.asyncio
 async def test_fake_api_pipeline_returns_transcript_translation_and_voice():
     paths = []

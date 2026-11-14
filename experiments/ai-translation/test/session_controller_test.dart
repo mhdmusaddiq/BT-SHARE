@@ -96,6 +96,52 @@ void main() {
     c.dispose();
   });
 
+  test('progress caption updates with later voice without duplicate cards',
+      () async {
+    final mic = FakeMicrophone();
+    final provider = ProgressProvider();
+    final voice = FakeVoice();
+    final c = TranslationSessionController(
+      microphone: mic,
+      providerFactory: () => provider,
+      voice: voice,
+    );
+    c.setCloudConsentGiven(true);
+    c.setAutoSpeak(true);
+    await c.start();
+    expect(c.status, AiSessionStatus.listening);
+    provider.send(
+      TranslationSegment(
+        id: 'cloud-1',
+        original: 'வணக்கம்',
+        translated: 'Hello',
+        receivedAt: DateTime.now(),
+        isMock: false,
+      ),
+    );
+    await flushEvents();
+    expect(c.segments.length, 1);
+    expect(voice.played, 0);
+    provider.send(
+      TranslationSegment(
+        id: 'cloud-1',
+        original: 'வணக்கம்',
+        translated: 'Hello',
+        receivedAt: DateTime.now(),
+        isMock: false,
+        voiceBytes: Uint8List.fromList([82, 73, 70, 70]),
+        audioMimeType: 'audio/wav',
+      ),
+    );
+    await flushEvents();
+    expect(c.segments.length, 1);
+    expect(c.latest?.voiceBytes, isNotNull);
+    expect(voice.played, 1);
+    await c.stop();
+    expect(mic.recording, isFalse);
+    c.dispose();
+  });
+
   test('AI failure never changes local room-link status', () async {
     final mic = FakeMicrophone();
     final c = TranslationSessionController(
@@ -111,6 +157,30 @@ void main() {
     expect(c.localAudioStatus, LocalAudioLinkStatus.connected);
     c.dispose();
   });
+}
+
+class ProgressProvider implements TranslationProvider {
+  final _segments = StreamController<TranslationSegment>.broadcast();
+
+  void send(TranslationSegment segment) => _segments.add(segment);
+
+  @override
+  bool get isMock => false;
+
+  @override
+  Stream<TranslationSegment> get segments => _segments.stream;
+
+  @override
+  Future<void> connect({
+    required TranslationLanguage source,
+    required TranslationLanguage target,
+  }) async {}
+
+  @override
+  Future<void> sendMicrophonePcm(Uint8List data) async {}
+
+  @override
+  Future<void> close() async => _segments.close();
 }
 
 class FailingRecorderMicrophone extends FakeMicrophone {
