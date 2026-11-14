@@ -62,7 +62,7 @@ async def test_text_reaches_client_before_tts():
             })
         if request.url.path.endswith("/audio/speech"):
             events.append("tts")
-            return httpx.Response(200, content=b"RIFF" + bytes(100))
+            return httpx.Response(200, content=b"ID3" + bytes(100))
         return httpx.Response(404)
 
     async def on_text(original, translated):

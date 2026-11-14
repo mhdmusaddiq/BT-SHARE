@@ -179,6 +179,11 @@ class TranslationSessionController extends ChangeNotifier {
           }
           status = AiSessionStatus.translating;
           errorMessage = null;
+          if (visible.voiceBytes?.isNotEmpty ?? false) {
+            // If the user tapped the early caption, clear its pending-audio
+            // warning as soon as the generated audio becomes available.
+            playbackError = null;
+          }
           _notify();
           if (voiceEnabled && autoSpeak &&
               (segment.isMock || segment.voiceBytes != null)) {

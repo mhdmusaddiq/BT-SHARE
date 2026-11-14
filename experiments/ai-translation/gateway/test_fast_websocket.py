@@ -11,6 +11,7 @@ def test_fast_websocket_sends_caption_before_voice(monkeypatch):
     monkeypatch.setenv("BT_DEV_GATEWAY_TOKEN", "unit-test-token")
     monkeypatch.setenv("OPENAI_API_KEY", "fake-no-charge-key")
     monkeypatch.setenv("BT_AI_LATENCY_MODE", "fast")
+    monkeypatch.setenv("BT_AI_TTS_FORMAT", "mp3")
     calls = []
 
     async def fake_translate(self, pcm, source, target, on_text=None, metrics=None):
