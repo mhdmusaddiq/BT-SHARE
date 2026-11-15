@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:audio_stream_player/audio_stream_player.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -24,6 +26,31 @@ class DeviceTranslatedVoiceOutput
   final FlutterTts _tts = FlutterTts();
   final AudioPlayer _player = AudioPlayer();
   AudioStreamPlayer? _live;
+  StreamSubscription<void>? _liveUnderrunSubscription;
+  Timer? _liveStartupTimer;
+  bool _livePlaybackStarted = false;
+  int _liveUnderrunCount = 0;
+
+  // Client-side jitter protection. 24kHz mono PCM16, input from an already
+  // authenticated realtime gateway. Start after some audio is buffered.
+  // Override with a dart-define to A/B test the latency/quality trade-off.
+  static const int _requestedPrebufferMs = int.fromEnvironment(
+    'BT_LIVE_VOICE_PREBUFFER_MS',
+    defaultValue: 320,
+  );
+  static const int _requestedMaxWaitMs = int.fromEnvironment(
+    'BT_LIVE_VOICE_MAX_WAIT_MS',
+    defaultValue: 600,
+  );
+  static final Duration _minimumStartupBuffer = Duration(
+    milliseconds: _requestedPrebufferMs.clamp(100, 750),
+  );
+  static final Duration _maximumStartupWait = Duration(
+    milliseconds: _requestedMaxWaitMs.clamp(200, 1200),
+  );
+
+  @visibleForTesting
+  int get liveUnderrunCount => _liveUnderrunCount;
 
   @override
   Future<void> play(
@@ -64,10 +91,36 @@ class DeviceTranslatedVoiceOutput
   @override
   Future<void> startLive() async {
     if (_live != null) return;
-    _live = await AudioStreamPlayer.create(
-      sampleRate: 24000, channels: 1, format: PcmFormat.s16le,
+    final live = await AudioStreamPlayer.create(
+      sampleRate: 24000,
+      channels: 1,
+      format: PcmFormat.s16le,
     );
-    await _live!.play();
+    _live = live;
+    _livePlaybackStarted = false;
+    _liveUnderrunCount = 0;
+    _liveUnderrunSubscription = live.onUnderrun.listen((_) {
+      if (_live != live) return;
+      _liveUnderrunCount++;
+      if (kDebugMode) {
+        // No microphone content, translations, identifiers or tokens logged.
+        debugPrint('BT SHARE realtime audio underrun: #$_liveUnderrunCount');
+      }
+    });
+    // Playback does NOT begin here: wait for a small PCM jitter buffer.
+  }
+
+  Future<void> _beginLivePlayback(AudioStreamPlayer live) async {
+    if (_live != live || _livePlaybackStarted) return;
+    _liveStartupTimer?.cancel();
+    _liveStartupTimer = null;
+    _livePlaybackStarted = true;
+    try {
+      await live.play();
+    } on Object {
+      _livePlaybackStarted = false;
+      rethrow;
+    }
   }
 
   @override
@@ -76,20 +129,47 @@ class DeviceTranslatedVoiceOutput
       throw StateError('Invalid realtime PCM16 data.');
     }
     await startLive();
-    final live = _live!;
-    // Bounded playback buffering; never store minutes of stale speech.
-    final buffered = await live.bufferedDuration();
-    if (buffered > const Duration(seconds: 2)) {
+    final live = _live;
+    if (live == null) return;
+    final before = await live.bufferedDuration();
+    if (_live != live) return; // Stop or mute during asynchronous native call.
+    // Never let queued translated voice drift multiple seconds behind speech.
+    if (before > const Duration(seconds: 2)) {
       await stopLive();
       throw StateError('Translated audio buffer exceeded 2 seconds.');
     }
     await live.feed(pcm16);
+    if (_live != live || _livePlaybackStarted) return;
+    final ready = await live.bufferedDuration();
+    if (_live != live || _livePlaybackStarted) return;
+    if (ready >= _minimumStartupBuffer) {
+      // A few PCM frames have arrived; start playout with gap protection.
+      await _beginLivePlayback(live);
+    } else if (_liveStartupTimer == null) {
+      // Very short utterances must still play if no more chunks arrive.
+      _liveStartupTimer = Timer(_maximumStartupWait, () {
+        _liveStartupTimer = null;
+        if (_live == live && !_livePlaybackStarted) {
+          unawaited(_beginLivePlayback(live).catchError((Object error) {
+            if (kDebugMode) {
+              debugPrint('BT SHARE realtime audio start failed: '
+                  '${error.runtimeType}');
+            }
+          }));
+        }
+      });
+    }
   }
 
   @override
   Future<void> stopLive() async {
+    _liveStartupTimer?.cancel();
+    _liveStartupTimer = null;
+    _livePlaybackStarted = false;
     final live = _live;
     _live = null;
+    await _liveUnderrunSubscription?.cancel();
+    _liveUnderrunSubscription = null;
     if (live != null) {
       await live.stop();
       await live.dispose();

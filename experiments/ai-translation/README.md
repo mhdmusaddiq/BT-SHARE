@@ -518,3 +518,46 @@ Sources:
 - https://kotlinlang.org/docs/gradle-configure-project.html#check-for-jvm-target-compatibility-of-related-compile-tasks
 - https://developer.android.com/build/jdks
 - https://github.com/adrianczuczka/audio_stream_player/blob/v1.1.0/android/build.gradle.kts
+
+## C3 Phase 2.1 · Stuttering/jitter-buffer fix (2026-11-15)
+
+A Redmi Note 9 Pro user confirmed live captions WORKING, streaming AI voice
+WORKING, voice delay 1–3 sec, but speech was breaking/stuttering.
+The live player previously called `play()` immediately after creating the
+native AudioTrack and before buffering any PCM. This can cause playback
+underruns when output PCM comes in bursts over the hotspot.
+
+A **small configurable startup jitter buffer** is now opt-in by source
+update (default 320 ms, hard-clamped to 100–750 ms). PCM is fed to
+AudioStreamPlayer before calling `play()`; a 600-ms max-wait fallback
+(clamped 200–1200 ms) starts audio even if a short utterance never fills
+the target. Playback source, microphone and live subtitles are unchanged.
+Actual underruns are counted via `onUnderrun` and reported in **debug**
+logs as `BT SHARE realtime audio underrun: #<count>` (no speech content).
+The existing 2-second native buffer cap and Dart queued-byte limit remain.
+
+**A/B test** startup buffering at default and 500 ms:
+```powershell
+flutter run -d f7d152a --dart-define-from-file=local_gateway.json
+# If still choppy, rerun with:
+flutter run -d f7d152a --dart-define-from-file=local_gateway.json --dart-define=BT_LIVE_VOICE_PREBUFFER_MS=500
+```
+Do not apply both runs simultaneously. Use the same 20–30-second spoken
+passage and headset/hotspot, compare gaps, first-voice delay and
+`BT SHARE realtime audio underrun` count in the Flutter debug console.
+The max-wait timer prevents silence for short translated segments; this
+is a mitigation rather than an assertion that network jitter caused
+the reported stutter.
+
+**Next if underruns persist:** add in-session adaptive rebuffer (with
+latency ceiling), inspect 200-ms frame delivery jitter and native
+AudioTrack scheduling, and switch to binary WS frames after benchmarking.
+Do not lower buffering to zero or claim sub-second latency before
+observing on-device p50/p95 first voice measurements.
+
+**Status:** code committed, Android physical test pending. This fix
+does not alter `BT_AI_CAPTION_ENGINE` or `BT_AI_REALTIME_VOICE` flags.
+If voice worsens, return to previous commit or run
+`BT_AI_REALTIME_VOICE=0` for live caption-only fallback.
+
+Player guide: https://pub.dev/packages/audio_stream_player/versions/1.1.0
