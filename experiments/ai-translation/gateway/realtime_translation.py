@@ -16,6 +16,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from websockets.asyncio.client import connect
 
 from .audio import Pcm16To24
+from .audio_pacing import AudioRelayOverloaded, PacedPcmRelay
 from .diagnostics import RealtimeGatewayMetrics
 from .protocol import ProtocolError, decode_frame
 
@@ -88,6 +89,7 @@ async def realtime_caption_session(
     """Called only after the existing MIC-only token and start validation."""
     receiver = None
     captions = None
+    audio_relay = None
     # Opt-in per Python gateway process. Default remains proven caption-only.
     voice_flag = os.getenv("BT_AI_REALTIME_VOICE", "0").lower()
     if voice_flag not in ("0", "1"):
@@ -95,6 +97,12 @@ async def realtime_caption_session(
         await phone.close(code=1011)
         return
     streaming_voice = voice_flag == "1"
+    pace_flag = os.getenv("BT_AI_PACE_OUTPUT_AUDIO", "1").lower()
+    if pace_flag not in ("0", "1"):
+        await _send_safe_error(phone, "Invalid BT_AI_PACE_OUTPUT_AUDIO; use 0 or 1")
+        await phone.close(code=1011)
+        return
+    paced_audio = pace_flag == "1"
     metrics = RealtimeGatewayMetrics(
         enabled=os.getenv("BT_AI_DIAGNOSTICS", "0") == "1"
     )
@@ -139,7 +147,30 @@ async def realtime_caption_session(
                 if event.get("type") != "session.created":
                     raise ProtocolError("Unexpected realtime handshake event")
 
-            await phone.send_json({
+            # Single serialized phone sender for independent captions/audio.
+            send_lock = asyncio.Lock()
+
+            async def send_locked(payload: dict) -> None:
+                async with send_lock:
+                    await phone.send_json(payload)
+
+            if streaming_voice:
+                async def send_pcm(sequence: int, chunk: bytes) -> None:
+                    await send_locked({
+                        "type": "audio_delta",
+                        "source_mode": "MIC",
+                        "sequence": sequence,
+                        "sample_rate_hz": 24000,
+                        "channels": 1,
+                        "encoding": "pcm_s16le",
+                        "pcm16_base64": base64.b64encode(chunk).decode("ascii"),
+                    })
+                    metrics.mark("gateway_first_audio_sent")
+
+                audio_relay = PacedPcmRelay(send_pcm, paced=paced_audio)
+                audio_relay.start()
+
+            await send_locked({
                 "type": "ready",
                 "source_mode": "MIC",
                 "source_language": source,
@@ -150,6 +181,7 @@ async def realtime_caption_session(
                 "streaming_audio": streaming_voice,
                 "audio_sample_rate_hz": 24000 if streaming_voice else None,
                 "audio_frame_ms": 200,
+                "output_audio_paced": streaming_voice and paced_audio,
             })
 
             async def microphone_to_upstream() -> None:
@@ -193,7 +225,6 @@ async def realtime_caption_session(
                 state = LiveCaptionState()
                 last_emit = 0.0
                 last_audio_ms = None
-                audio_sequence = 0
                 while True:
                     # Coalesce bursts to ~12 UI updates/second, but flush
                     # the trailing fragment even if no new events arrive.
@@ -208,7 +239,7 @@ async def realtime_caption_session(
                         )
                     except asyncio.TimeoutError:
                         if state.dirty:
-                            await phone.send_json(state.payload(last_audio_ms))
+                            await send_locked(state.payload(last_audio_ms))
                             state.dirty = False
                             last_emit = time.monotonic()
                         continue
@@ -222,7 +253,12 @@ async def realtime_caption_session(
                         raise RuntimeError("Realtime AI rejected audio stream")
                     if kind == "session.closed":
                         if state.dirty:
-                            await phone.send_json(state.payload(last_audio_ms))
+                            await send_locked(state.payload(last_audio_ms))
+                        if audio_relay is not None:
+                            # Drain queued speech on graceful upstream close.
+                            # The 12s queue is bounded; 14s permits normal
+                            # output pacing without dropping samples.
+                            await audio_relay.drain()
                         return
                     if kind == "session.output_audio.delta":
                         if not streaming_voice:
@@ -241,19 +277,13 @@ async def realtime_caption_session(
                         if not pcm or len(pcm) % 2 or len(pcm) > MAX_OUTPUT_DELTA_BYTES:
                             raise ProtocolError("Invalid realtime PCM16 samples")
                         metrics.mark("provider_first_audio")
+                        # Never await playback-time pacing in the upstream
+                        # receive loop: captions must not wait for PCM output.
                         for offset in range(0, len(pcm), OUTPUT_FRAME_BYTES):
                             chunk = pcm[offset:offset + OUTPUT_FRAME_BYTES]
-                            audio_sequence += 1
-                            await phone.send_json({
-                                "type": "audio_delta",
-                                "source_mode": "MIC",
-                                "sequence": audio_sequence,
-                                "sample_rate_hz": 24000,
-                                "channels": 1,
-                                "encoding": "pcm_s16le",
-                                "pcm16_base64": base64.b64encode(chunk).decode("ascii"),
-                            })
-                            metrics.mark("gateway_first_audio_sent")
+                            if audio_relay is None:
+                                raise ProtocolError("PCM relay unavailable")
+                            audio_relay.enqueue(chunk)
                         continue
                     if state.accept(kind, event.get("delta")):
                         if kind == "session.output_transcript.delta":
@@ -261,7 +291,7 @@ async def realtime_caption_session(
                         if type(event.get("elapsed_ms")) is int:
                             last_audio_ms = event["elapsed_ms"]
                         if time.monotonic() - last_emit >= UI_UPDATE_SECONDS:
-                            await phone.send_json(state.payload(last_audio_ms))
+                            await send_locked(state.payload(last_audio_ms))
                             state.dirty = False
                             last_emit = time.monotonic()
 
@@ -280,6 +310,14 @@ async def realtime_caption_session(
                     await asyncio.wait_for(captions, timeout=16)
                 elif captions in done and not receiver.done():
                     raise RuntimeError("Realtime AI closed unexpectedly")
+    except AudioRelayOverloaded:
+        # Do not silently skip translated words when the caller falls behind.
+        if audio_relay is not None:
+            await audio_relay.cancel()
+        await _send_safe_error(
+            phone, "Translated speech delivery exceeded the safe backlog. "
+            "Stop and restart this translation session."
+        )
     except ProtocolError:
         await _send_safe_error(phone, "Invalid microphone frame or live caption event")
     except (TimeoutError, asyncio.TimeoutError):
@@ -292,6 +330,8 @@ async def realtime_caption_session(
             "quota or hotspot; use segmented fallback.",
         )
     finally:
+        if audio_relay is not None:
+            await audio_relay.cancel()
         for task in (receiver, captions):
             if task is not None and not task.done():
                 task.cancel()
