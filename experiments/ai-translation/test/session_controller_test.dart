@@ -47,13 +47,33 @@ class FakeVoice implements TranslatedVoiceOutput {
 Future<void> flushEvents() => Future<void>.delayed(const Duration(milliseconds: 20));
 
 void main() {
-  test('phase 2.3.2 gateway pacing metadata remains optional', () {
-    final diagnostics = LiveSessionDiagnostics();
-    diagnostics.reset();
-    expect(diagnostics.firstAudioPacketMs, isNull);
-    // GatewayAudioPacingInfo is intentionally optional for fake providers
-    // and old WebSocket ready frames. Unknown is not evidence of pacing OFF.
-    expect(FakeVoice() is LiveVoiceBufferInfo, isFalse);
+  test('phase 2.3.2 controller displays advertised gateway pacing', () async {
+    final provider = PacedStreamingProgressProvider(true);
+    final controller = TranslationSessionController(
+      microphone: FakeMicrophone(),
+      providerFactory: () => provider,
+      voice: FakeLiveVoice(),
+    );
+    controller.setCloudConsentGiven(true);
+    expect(controller.outputAudioPaced, isNull);
+    await controller.start();
+    expect(controller.outputAudioPaced, isTrue);
+    await controller.stop();
+    controller.dispose();
+  });
+
+  test('phase 2.3.2 missing pacing field remains unknown', () async {
+    final provider = StreamingProgressProvider();
+    final controller = TranslationSessionController(
+      microphone: FakeMicrophone(),
+      providerFactory: () => provider,
+      voice: FakeLiveVoice(),
+    );
+    controller.setCloudConsentGiven(true);
+    await controller.start();
+    expect(controller.outputAudioPaced, isNull);
+    await controller.stop();
+    controller.dispose();
   });
 
   test('phase 2.3 known backlog has actionable error, captions remain',
@@ -423,6 +443,13 @@ class StreamingProgressProvider extends ProgressProvider
     await _pcm.close();
     await super.close();
   }
+}
+
+class PacedStreamingProgressProvider extends StreamingProgressProvider
+    implements GatewayAudioPacingInfo {
+  PacedStreamingProgressProvider(this.outputAudioPaced);
+  @override
+  final bool? outputAudioPaced;
 }
 
 class FakeLiveVoice extends FakeVoice

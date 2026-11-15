@@ -80,3 +80,35 @@ the final paced audio chunk.
 
 These changes were pushed remotely; physical device and Windows test
 execution are **pending user verification**.
+
+## Phase 2.3.2 — Troubleshooting the same 2-second Android backlog
+
+A second Redmi Note 9 Pro screenshot still showed PCM backlog 2,040ms,
+746 audio chunks and no player underruns. This screenshot alone does not
+confirm which Python server version was running, whether paced audio was
+negotiated, or whether the Android AudioTrack was actually consuming samples.
+
+Added debug-only diagnostics (no audio/text/secrets logged):
+
+- `Gateway paced audio: ON/OFF/UNKNOWN` is read from the *actual WebSocket
+  ready message* field `output_audio_paced`. `UNKNOWN` indicates that the
+  server did not advertise the field, often because an older Uvicorn process
+  was not restarted. Do not interpret UNKNOWN as OFF.
+- `Native PCM: playing/idle/paused` reports the plugin's player-state event.
+- `Buffer ...ms · Peak ...ms` shows the native PCM queue measurements.
+- The Flutter debug terminal emits `BT_SHARE_PCM native_state=...` for state
+  transitions, and a bounded `buffer_ms=... peak_ms=... native_state=...`
+  sample every 40 PCM pushes. Not a raw audio log.
+
+**Required for comparison:** Stop the old Uvicorn process and restart it
+with `BT_AI_PACE_OUTPUT_AUDIO=1`, `BT_AI_REALTIME_VOICE=1` and
+`BT_AI_CAPTION_ENGINE=realtime` in the same credential-configured terminal.
+Then stop/relaunch Flutter, because its UI code changed. After speaking,
+share a screenshot of the debug fields and ONLY `BT_SHARE_PCM` lines.
+
+This commit is diagnostic. The 2,000ms native PCM safety bound stays intact,
+and there is no unverified time stretching, silent audio discard or
+platform-specific routing override. If pacing is ON and player state is
+'playing' while the buffer rises, the next stage is measured audio-clock
+synchronization/playback rate investigation. If state is 'idle/paused', the
+next stage is recovery of unexpected Android playback state.
