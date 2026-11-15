@@ -166,6 +166,14 @@ async def realtime_caption_session(
                         "pcm16_base64": base64.b64encode(chunk).decode("ascii"),
                     })
                     metrics.mark("gateway_first_audio_sent")
+                    if sequence % 5 == 0 and audio_relay is not None:
+                        # Diagnostic metadata only. Never send transcript,
+                        # raw PCM, credentials, or provider event payloads.
+                        await send_locked({
+                            "type": "audio_metrics",
+                            "source_mode": "MIC",
+                            **audio_relay.metrics(),
+                        })
 
                 audio_relay = PacedPcmRelay(send_pcm, paced=paced_audio)
                 audio_relay.start()

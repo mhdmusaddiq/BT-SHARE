@@ -44,6 +44,24 @@ class PacedPcmRelay:
         self._task: asyncio.Task[None] | None = None
         self._closed = False
         self._sequence = 0
+        self._generated_bytes = 0
+        self._sent_bytes = 0
+
+    @property
+    def pending_audio_ms(self) -> int:
+        """Generated PCM not yet handed to phone WebSocket (not phone delay)."""
+        pending = max(0, self._generated_bytes - self._sent_bytes)
+        return round(pending * 1000 / self._bytes_per_second)
+
+    @property
+    def sent_audio_ms(self) -> int:
+        return round(self._sent_bytes * 1000 / self._bytes_per_second)
+
+    def metrics(self) -> dict[str, int]:
+        return {
+            "pending_audio_ms": self.pending_audio_ms,
+            "sent_audio_ms": self.sent_audio_ms,
+        }
 
     def start(self) -> None:
         if self._task is not None:
@@ -60,6 +78,7 @@ class PacedPcmRelay:
             raise ProtocolError("PCM relay stopped unexpectedly")
         try:
             self._queue.put_nowait(pcm)
+            self._generated_bytes += len(pcm)
         except asyncio.QueueFull as exc:
             raise AudioRelayOverloaded("Generated audio exceeds PCM queue cap") from exc
 
@@ -78,6 +97,7 @@ class PacedPcmRelay:
                 due = max(now, due if due is not None else now)
             self._sequence += 1
             await self._send(self._sequence, pcm)
+            self._sent_bytes += len(pcm)
             if self.paced:
                 due = max(due, self._clock()) + (
                     len(pcm) / self._bytes_per_second

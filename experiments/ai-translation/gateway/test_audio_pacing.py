@@ -84,3 +84,45 @@ async def test_pcm_frames_require_valid_format():
     with pytest.raises(ValueError):
         relay.enqueue(b"x")
     await relay.cancel()
+
+@pytest.mark.asyncio
+async def test_pending_audio_duration_tracks_bursts_and_sent_frames():
+    """Bursts accumulate behind paced delivery; numbers cannot be confused
+    with model latency or Android speaker onset."""
+    clk = Clock()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def send(seq, pcm):
+        if seq == 1:
+            entered.set()
+            await release.wait()
+
+    relay = PacedPcmRelay(send, clock=clk.monotonic, sleep=clk.sleep)
+    relay.start()
+    for _ in range(3):
+        relay.enqueue(bytes(9600))
+    assert relay.pending_audio_ms == 600
+    await entered.wait()
+    assert relay.pending_audio_ms == 600
+    release.set()
+    await relay.drain()
+    assert relay.pending_audio_ms == 0
+    assert relay.sent_audio_ms == 600
+    assert relay.metrics() == {
+        "pending_audio_ms": 0,
+        "sent_audio_ms": 600,
+    }
+
+
+@pytest.mark.asyncio
+async def test_queued_metric_only_counts_accepted_audio():
+    async def send(seq, pcm):
+        pass
+    relay = PacedPcmRelay(send, max_frames=1)
+    relay.start()
+    relay.enqueue(bytes(9600))
+    with pytest.raises(AudioRelayOverloaded):
+        relay.enqueue(bytes(9600))
+    assert relay.pending_audio_ms == 200
+    await relay.cancel()
