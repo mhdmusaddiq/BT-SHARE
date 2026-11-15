@@ -16,6 +16,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from websockets.asyncio.client import connect
 
 from .audio import Pcm16To24
+from .diagnostics import RealtimeGatewayMetrics
 from .protocol import ProtocolError, decode_frame
 
 OPENAI_TRANSLATION_URL = (
@@ -94,6 +95,9 @@ async def realtime_caption_session(
         await phone.close(code=1011)
         return
     streaming_voice = voice_flag == "1"
+    metrics = RealtimeGatewayMetrics(
+        enabled=os.getenv("BT_AI_DIAGNOSTICS", "0") == "1"
+    )
     try:
         async with connect(
             OPENAI_TRANSLATION_URL,
@@ -170,6 +174,7 @@ async def realtime_caption_session(
                     while len(pending) >= INPUT_FRAME_BYTES:
                         frame = bytes(pending[:INPUT_FRAME_BYTES])
                         del pending[:INPUT_FRAME_BYTES]
+                        metrics.mark_first_input_send()
                         await asyncio.wait_for(upstream.send(json.dumps({
                             "type": "session.input_audio_buffer.append",
                             "audio": base64.b64encode(frame).decode("ascii"),
@@ -235,6 +240,7 @@ async def realtime_caption_session(
                             raise ProtocolError("Invalid realtime audio delta") from exc
                         if not pcm or len(pcm) % 2 or len(pcm) > MAX_OUTPUT_DELTA_BYTES:
                             raise ProtocolError("Invalid realtime PCM16 samples")
+                        metrics.mark("provider_first_audio")
                         for offset in range(0, len(pcm), OUTPUT_FRAME_BYTES):
                             chunk = pcm[offset:offset + OUTPUT_FRAME_BYTES]
                             audio_sequence += 1
@@ -247,8 +253,11 @@ async def realtime_caption_session(
                                 "encoding": "pcm_s16le",
                                 "pcm16_base64": base64.b64encode(chunk).decode("ascii"),
                             })
+                            metrics.mark("gateway_first_audio_sent")
                         continue
                     if state.accept(kind, event.get("delta")):
+                        if kind == "session.output_transcript.delta":
+                            metrics.mark("provider_first_target_caption")
                         if type(event.get("elapsed_ms")) is int:
                             last_audio_ms = event["elapsed_ms"]
                         if time.monotonic() - last_emit >= UI_UPDATE_SECONDS:
