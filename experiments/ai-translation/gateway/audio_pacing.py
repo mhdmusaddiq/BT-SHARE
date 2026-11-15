@@ -30,6 +30,7 @@ class PacedPcmRelay:
         max_frames: int = 60,  # 12 seconds at 200ms each
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        on_progress: Callable[[dict[str, int]], Awaitable[None]] | None = None,
     ):
         if bytes_per_second <= 0 or max_frames <= 0:
             raise ValueError("Invalid PCM pacing parameters")
@@ -41,6 +42,7 @@ class PacedPcmRelay:
         )
         self._clock = clock
         self._sleep = sleep
+        self._on_progress = on_progress
         self._task: asyncio.Task[None] | None = None
         self._closed = False
         self._sequence = 0
@@ -98,6 +100,8 @@ class PacedPcmRelay:
             self._sequence += 1
             await self._send(self._sequence, pcm)
             self._sent_bytes += len(pcm)
+            if self._on_progress is not None and self._sequence % 5 == 0:
+                await self._on_progress(self.metrics())
             if self.paced:
                 due = max(due, self._clock()) + (
                     len(pcm) / self._bytes_per_second

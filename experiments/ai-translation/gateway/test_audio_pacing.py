@@ -126,3 +126,25 @@ async def test_queued_metric_only_counts_accepted_audio():
         relay.enqueue(bytes(9600))
     assert relay.pending_audio_ms == 200
     await relay.cancel()
+
+@pytest.mark.asyncio
+async def test_reported_queue_snapshot_excludes_already_sent_chunk():
+    clk = Clock()
+    snapshots = []
+    async def send(seq, pcm):
+        return None
+    async def progress(stats):
+        snapshots.append(stats)
+
+    relay = PacedPcmRelay(
+        send, clock=clk.monotonic, sleep=clk.sleep,
+        on_progress=progress,
+    )
+    relay.start()
+    for _ in range(6):
+        relay.enqueue(bytes(9600))
+    await relay.drain()
+    assert snapshots == [{
+        "pending_audio_ms": 200,
+        "sent_audio_ms": 1000,
+    }]
