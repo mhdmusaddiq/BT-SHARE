@@ -576,3 +576,10 @@ User-reported real gateway logs show first provider audio arrived around
 later. Opt-in per-stream adaptive startup buffering and debug-only MIC
 pause/resume counts were added without changing caption/audio processing.
 See [Phase 2.3 Audio Continuity](docs/phase_2_3_audio_continuity.md).
+
+## Phase 2.3.4 — Audio delay decomposition
+
+Opt-in realtime audio queue reporting and phone PCM arrival-gap diagnostics
+are documented in [Phase 2.3.4 Audio Queue Diagnostics](docs/phase_2_3_4_audio_queue_diagnostics.md).
+This update measures queued output speech; it does not yet change model voice
+identity, inference latency or Android playback buffering behavior.
