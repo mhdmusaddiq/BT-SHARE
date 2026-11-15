@@ -184,6 +184,7 @@ def test_realtime_streams_real_pcm_audio_as_bounded_frames(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "fake-provider-key")
     monkeypatch.setenv("BT_AI_CAPTION_ENGINE", "realtime")
     monkeypatch.setenv("BT_AI_REALTIME_VOICE", "1")
+    monkeypatch.setenv("BT_AI_PACE_OUTPUT_AUDIO", "1")
     fake = FakeRealtimeWithAudio()
     monkeypatch.setattr(realtime, "connect", lambda *a, **k: fake)
 
@@ -252,4 +253,74 @@ def test_realtime_off_remains_caption_only(monkeypatch):
                 if msg.get("translated_text") == "Hello":
                     break
             assert any(m.get("translated_text") == "Hello" for m in updates)
+            ws.send_json({"type": "stop"})
+
+class FakeRealtimeBurst(FakeRealtimeUpstream):
+    """Deliver 800ms of PCM before its matching text delta, immediately."""
+
+    def __init__(self):
+        super().__init__()
+        self.send_dummy_invalid_audio = False
+
+    async def send(self, message):
+        event = json.loads(message)
+        if event["type"] == "session.input_audio_buffer.append":
+            # Keep handshake/auth validation from parent, but replace the
+            # first generated response to force audio-before-text ordering.
+            if self.audio_frames > 0:
+                self.audio_frames += 1
+                return
+            self.audio_frames = 1
+            assert len(base64.b64decode(event["audio"])) == 9600
+            await self.events.put(json.dumps({
+                "type": "session.output_audio.delta",
+                "format": "pcm16", "sample_rate": 24000, "channels": 1,
+                "delta": base64.b64encode(bytes(38400)).decode("ascii"),
+            }))
+            await self.events.put(json.dumps({
+                "type": "session.output_transcript.delta",
+                "delta": "Hello", "elapsed_ms": 200,
+            }))
+            return
+        await super().send(message)
+
+
+def test_pcm_burst_paces_without_blocking_live_caption(monkeypatch):
+    monkeypatch.setenv("BT_DEV_GATEWAY_TOKEN", "unit-test-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-provider-key")
+    monkeypatch.setenv("BT_AI_CAPTION_ENGINE", "realtime")
+    monkeypatch.setenv("BT_AI_REALTIME_VOICE", "1")
+    monkeypatch.setenv("BT_AI_PACE_OUTPUT_AUDIO", "1")
+    fake = FakeRealtimeBurst()
+    monkeypatch.setattr(realtime, "connect", lambda *a, **k: fake)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/v1/stream") as ws:
+            ws.send_json({
+                "type": "start", "source_mode": "MIC",
+                "source_language": "ta", "target_language": "en",
+                "format": "pcm_s16le", "sample_rate_hz": 16000,
+                "channels": 1, "ephemeral_session_token": "unit-test-token",
+            })
+            ready = ws.receive_json()
+            assert ready["output_audio_paced"] is True
+            mic_pcm = array("h", [1000] * 1600).tobytes()
+            for seq in (1, 2, 3):
+                ws.send_json({
+                    "type": "audio", "source_mode": "MIC",
+                    "sequence": seq,
+                    "pcm16_base64": base64.b64encode(mic_pcm).decode("ascii"),
+                })
+            seen = []
+            for _ in range(8):
+                event = ws.receive_json()
+                seen.append(event)
+                if sum(e.get("type") == "audio_delta" for e in seen) == 4:
+                    break
+            audio = [e for e in seen if e.get("type") == "audio_delta"]
+            assert [e["sequence"] for e in audio] == [1, 2, 3, 4]
+            assert any(
+                e.get("type") == "segment" and e.get("translated_text") == "Hello"
+                for e in seen[:-1]
+            ), "Captions should arrive before the last 200ms output frame"
             ws.send_json({"type": "stop"})
