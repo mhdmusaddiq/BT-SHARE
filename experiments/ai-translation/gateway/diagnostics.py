@@ -29,6 +29,7 @@ class RealtimeGatewayMetrics:
         self._origin: float | None = None
         self._seen: set[str] = set()
         self.timings_ms: dict[str, int] = {}
+        self._gap_recorded = False
 
     def mark_first_input_send(self) -> None:
         if self._origin is not None:
@@ -50,3 +51,16 @@ class RealtimeGatewayMetrics:
             LOGGER.info(
                 "BT_SHARE_METRIC stage=%s elapsed_ms=%d", stage, elapsed_ms
             )
+        # Derived server-side ordering metric. This compares FIRST provider
+        # events only; neither event is guaranteed to correspond to the
+        # same spoken phrase or to actual device speaker onset.
+        caption = self.timings_ms.get("provider_first_target_caption")
+        audio = self.timings_ms.get("provider_first_audio")
+        if not self._gap_recorded and caption is not None and audio is not None:
+            self._gap_recorded = True
+            gap = caption - audio
+            self.timings_ms["provider_caption_minus_audio"] = gap
+            if self.enabled:
+                LOGGER.info(
+                    "BT_SHARE_METRIC stage=caption_minus_audio gap_ms=%d", gap
+                )

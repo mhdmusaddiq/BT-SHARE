@@ -24,6 +24,7 @@ def test_first_events_record_relative_to_first_upstream_input():
         "provider_first_target_caption": 85,
         "provider_first_audio": 300,
         "gateway_first_audio_sent": 312,
+        "provider_caption_minus_audio": -215,
     }
 
 
@@ -63,3 +64,22 @@ def test_diagnostic_stage_allowlist_rejects_untrusted_names():
     m.mark_first_input_send()
     with pytest.raises(ValueError, match="Unsupported diagnostic stage"):
         m.mark("mic_transcript_or_token_goes_here")
+
+def test_provider_audio_before_caption_gap_is_positive_and_logged_once(monkeypatch):
+    entries = []
+    monkeypatch.setattr(
+        "gateway.diagnostics.LOGGER.info", lambda *args: entries.append(args)
+    )
+    t = [500.0]
+    m = RealtimeGatewayMetrics(enabled=True, clock=lambda: t[0])
+    m.mark_first_input_send()
+    t[0] = 500.74
+    m.mark("provider_first_audio")
+    t[0] = 503.31
+    m.mark("provider_first_target_caption")
+    m.mark("provider_first_target_caption")
+    assert m.timings_ms["provider_caption_minus_audio"] == 2570
+    assert sum("stage=caption_minus_audio" in call[0] for call in entries) == 1
+    assert entries[-1] == (
+        "BT_SHARE_METRIC stage=caption_minus_audio gap_ms=%d", 2570
+    )
