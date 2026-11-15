@@ -326,10 +326,21 @@ class TranslationSessionController extends ChangeNotifier {
       startupPhase = 'gateway';
       await provider.connect(source: source, target: target);
       if (!_current(run)) return;
-      outputAudioPaced = provider is GatewayAudioPacingInfo
-          ? provider.outputAudioPaced : null;
-      if (provider is GatewayAudioQueueInfo) {
-        _audioQueueSubscription = provider.audioQueueMetrics.listen((event) {
+      // These optional interfaces are independent of TranslationProvider.
+      // A switch-pattern creates an explicitly typed local reference,
+      // avoiding an invalid direct getter access on TranslationProvider.
+      final GatewayAudioPacingInfo? pacingInfo = switch (provider) {
+        GatewayAudioPacingInfo info => info,
+        _ => null,
+      };
+      outputAudioPaced = pacingInfo?.outputAudioPaced;
+
+      final GatewayAudioQueueInfo? queueInfo = switch (provider) {
+        GatewayAudioQueueInfo info => info,
+        _ => null,
+      };
+      if (queueInfo != null) {
+        _audioQueueSubscription = queueInfo.audioQueueMetrics.listen((event) {
           if (!_current(run)) return;
           gatewayPendingAudioMs = event.pendingAudioMs;
           gatewaySentAudioMs = event.sentAudioMs;
