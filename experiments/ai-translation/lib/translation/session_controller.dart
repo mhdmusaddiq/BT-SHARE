@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import 'microphone_input.dart';
 import 'models.dart';
+import 'speech_activity_monitor.dart';
 import 'translation_provider.dart';
 import 'voice_output.dart';
 
@@ -116,6 +117,7 @@ class TranslationSessionController extends ChangeNotifier {
   int? get latestMeasuredLatencyMs => latest?.measuredLatencyMs;
   int receivedMicChunks = 0;
   final LiveSessionDiagnostics liveDiagnostics = LiveSessionDiagnostics();
+  final SpeechActivityMonitor speechActivity = SpeechActivityMonitor();
 
   TranslationProvider? _provider;
   StreamSubscription<Uint8List>? _micSubscription;
@@ -218,6 +220,7 @@ class TranslationSessionController extends ChangeNotifier {
     startedAt = null;
     receivedMicChunks = 0;
     liveDiagnostics.reset();
+    speechActivity.reset();
     streamingAudioAvailable = false;
     _livePlaybackFailed = false;
     _queuedAudioBytes = 0;
@@ -396,6 +399,7 @@ class TranslationSessionController extends ChangeNotifier {
         (bytes) {
           if (!_current(run)) return;
           receivedMicChunks++;
+          if (kDebugMode) speechActivity.observe(bytes);
           if (receivedMicChunks == 1) {
             liveDiagnostics.markMicFrame();
             _traceFirst('mic_first_frame', liveDiagnostics.firstMicFrameMs);

@@ -5,6 +5,7 @@ import 'package:audio_stream_player/audio_stream_player.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
+import 'adaptive_startup_buffer.dart';
 import 'models.dart';
 
 abstract class TranslatedVoiceOutput {
@@ -28,8 +29,16 @@ abstract class LiveVoiceEventSource {
   Stream<LiveVoiceEvent> get liveVoiceEvents;
 }
 
+/// Debug info about the startup buffer; dynamically adjustable only between
+/// live streams, never by interrupting speech already playing.
+abstract class LiveVoiceBufferInfo {
+  bool get adaptiveStartupEnabled;
+  int get currentStartupBufferMs;
+}
+
 class DeviceTranslatedVoiceOutput
-    implements TranslatedVoiceOutput, LiveTranslatedVoiceOutput, LiveVoiceEventSource {
+    implements TranslatedVoiceOutput, LiveTranslatedVoiceOutput,
+        LiveVoiceEventSource, LiveVoiceBufferInfo {
   final FlutterTts _tts = FlutterTts();
   final AudioPlayer _player = AudioPlayer();
   final StreamController<LiveVoiceEvent> _events =
@@ -55,9 +64,22 @@ class DeviceTranslatedVoiceOutput
     'BT_LIVE_VOICE_MAX_WAIT_MS',
     defaultValue: 600,
   );
-  static final Duration _minimumStartupBuffer = Duration(
-    milliseconds: _requestedPrebufferMs.clamp(100, 750).toInt(),
+  static const bool _adaptiveEnabled = bool.fromEnvironment(
+    'BT_LIVE_VOICE_ADAPTIVE_STARTUP',
+    defaultValue: false,
   );
+  late final AdaptiveStartupBuffer _startupPolicy = AdaptiveStartupBuffer(
+    initialMs: _requestedPrebufferMs.clamp(100, 750).toInt(),
+    enabled: _adaptiveEnabled,
+    minimumMs: _adaptiveEnabled ? 160 : 100,
+    maximumMs: _adaptiveEnabled ? 700 : 750,
+  );
+
+  @override
+  bool get adaptiveStartupEnabled => _adaptiveEnabled;
+
+  @override
+  int get currentStartupBufferMs => _startupPolicy.targetMs;
   static final Duration _maximumStartupWait = Duration(
     milliseconds: _requestedMaxWaitMs.clamp(200, 1200).toInt(),
   );
@@ -110,11 +132,13 @@ class DeviceTranslatedVoiceOutput
       format: PcmFormat.s16le,
     );
     _live = live;
+    _startupPolicy.beginStream();
     _livePlaybackStarted = false;
     _liveUnderrunCount = 0;
     _liveUnderrunSubscription = live.onUnderrun.listen((_) {
       if (_live != live) return;
       _liveUnderrunCount++;
+      _startupPolicy.recordUnderrun();
       if (!_events.isClosed) _events.add(LiveVoiceEvent.underrun);
       if (kDebugMode) {
         // No microphone content, translations, identifiers or tokens logged.
@@ -152,14 +176,17 @@ class DeviceTranslatedVoiceOutput
     if (_live != live) return; // Stop or mute during asynchronous native call.
     // Never let queued translated voice drift multiple seconds behind speech.
     if (before > const Duration(seconds: 2)) {
+      _startupPolicy.discardStream();
       await stopLive();
       throw StateError('Translated audio buffer exceeded 2 seconds.');
     }
     await live.feed(pcm16);
-    if (_live != live || _livePlaybackStarted) return;
+    if (_live != live) return;
+    _startupPolicy.recordChunk();
+    if (_livePlaybackStarted) return;
     final ready = await live.bufferedDuration();
     if (_live != live || _livePlaybackStarted) return;
-    if (ready >= _minimumStartupBuffer) {
+    if (ready >= Duration(milliseconds: _startupPolicy.targetMs)) {
       // A few PCM frames have arrived; start playout with gap protection.
       await _beginLivePlayback(live);
     } else {
@@ -185,6 +212,7 @@ class DeviceTranslatedVoiceOutput
     _livePlaybackStarted = false;
     final live = _live;
     _live = null;
+    if (live != null) _startupPolicy.finishStream();
     await _liveUnderrunSubscription?.cancel();
     _liveUnderrunSubscription = null;
     if (live != null) {

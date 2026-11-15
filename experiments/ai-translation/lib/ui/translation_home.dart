@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../translation/microphone_input.dart';
 import '../translation/models.dart';
 import '../translation/session_controller.dart';
+import '../translation/voice_output.dart';
 
 const _violet = Color(0xFF6455E8);
 const _muted = Color(0xFF697587);
@@ -530,7 +531,10 @@ class _TranslationHomeState extends State<TranslationHome> {
                 padding: const EdgeInsets.only(top: 12),
                 child: Text(
                   'DEBUG AUDIO TIMING · since MIC stream start (not speech onset)\n'
-                  '${controller.liveDiagnostics.summary}',
+                  '${controller.liveDiagnostics.summary}\n'
+                  'MIC activity (energy heuristic): ${controller.speechActivity.summary}\n'
+                  'Startup buffer: ${controller.voice is LiveVoiceBufferInfo ? (controller.voice as LiveVoiceBufferInfo).currentStartupBufferMs : '—'}ms '
+                  '(${controller.voice is LiveVoiceBufferInfo && (controller.voice as LiveVoiceBufferInfo).adaptiveStartupEnabled ? 'adaptive' : 'fixed'})',
                   style: const TextStyle(fontSize: 11, color: _muted),
                 ),
               ),
