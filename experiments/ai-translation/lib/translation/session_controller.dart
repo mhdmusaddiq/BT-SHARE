@@ -41,14 +41,14 @@ class LiveSessionDiagnostics {
 
   int? get _now => _clock.isRunning ? _clock.elapsedMilliseconds : null;
 
-  void markMicFrame() => firstMicFrameMs ??= _now;
-  void markTargetCaption() => firstTargetCaptionMs ??= _now;
+  void markMicFrame() { firstMicFrameMs ??= _now; }
+  void markTargetCaption() { firstTargetCaptionMs ??= _now; }
   void markAudioPacket() {
     audioChunksReceived++;
     firstAudioPacketMs ??= _now;
   }
-  void markPlaybackAccepted() => firstPlaybackAcceptedMs ??= _now;
-  void markUnderrun() => underruns++;
+  void markPlaybackAccepted() { firstPlaybackAcceptedMs ??= _now; }
+  void markUnderrun() { underruns++; }
 
   int? get captionToPlaybackAcceptedMs =>
       firstTargetCaptionMs == null || firstPlaybackAcceptedMs == null

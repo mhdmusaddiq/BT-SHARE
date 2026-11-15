@@ -561,3 +561,10 @@ If voice worsens, return to previous commit or run
 `BT_AI_REALTIME_VOICE=0` for live caption-only fallback.
 
 Player guide: https://pub.dev/packages/audio_stream_player/versions/1.1.0
+
+## C3 Phase 2.2 — Audio timing diagnostics (2026-11-15)
+
+Opt-in gateway metrics and Flutter debug timings are documented in
+[Phase 2.2 Diagnostics](docs/phase_2_2_diagnostics.md). This feature
+instruments the current streaming pipeline; it is not a fixed-voice or
+low-latency architecture change. Android test is pending.
