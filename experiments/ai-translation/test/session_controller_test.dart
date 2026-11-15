@@ -47,6 +47,66 @@ class FakeVoice implements TranslatedVoiceOutput {
 Future<void> flushEvents() => Future<void>.delayed(const Duration(milliseconds: 20));
 
 void main() {
+  test('phase 2.2 audio diagnostics reset, count and maintain monotonic origin',
+      () async {
+    final d = LiveSessionDiagnostics();
+    d.markTargetCaption();
+    expect(d.firstTargetCaptionMs, isNull);
+    d.start();
+    d.markMicFrame();
+    d.markTargetCaption();
+    d.markAudioPacket();
+    d.markAudioPacket();
+    d.markPlaybackAccepted();
+    d.markUnderrun();
+    expect(d.firstTargetCaptionMs, isNotNull);
+    expect(d.firstAudioPacketMs, isNotNull);
+    expect(d.firstPlaybackAcceptedMs, isNotNull);
+    expect(d.audioChunksReceived, 2);
+    expect(d.underruns, 1);
+    expect(d.captionToPlaybackAcceptedMs, isNotNull);
+    expect(d.summary, contains('Caption→player'));
+    d.stop();
+    d.reset();
+    expect(d.firstAudioPacketMs, isNull);
+    expect(d.audioChunksReceived, 0);
+    expect(d.underruns, 0);
+  });
+
+  test('phase 2.2 controller sees first audio even when auto-speak OFF',
+      () async {
+    final mic = FakeMicrophone();
+    final provider = StreamingProgressProvider();
+    final voice = FakeLiveVoice();
+    final c = TranslationSessionController(
+      microphone: mic, providerFactory: () => provider, voice: voice,
+    );
+    c.setCloudConsentGiven(true);
+    await c.start();
+    mic.stream.add(Uint8List(3200));
+    provider.send(TranslationSegment(
+      id: 'live-current', original: 'வணக்கம்', translated: 'Hello',
+      receivedAt: DateTime.now(), isMock: false, streamingAudio: true,
+    ));
+    provider.emitAudio(Uint8List(9600));
+    await flushEvents();
+    expect(c.liveDiagnostics.firstTargetCaptionMs, isNotNull);
+    expect(c.liveDiagnostics.firstAudioPacketMs, isNotNull);
+    expect(c.liveDiagnostics.audioChunksReceived, 1);
+    expect(voice.liveChunks, 0);
+    c.setAutoSpeak(true);
+    provider.emitAudio(Uint8List(9600));
+    await flushEvents();
+    voice.emitEvent(LiveVoiceEvent.playbackAccepted);
+    voice.emitEvent(LiveVoiceEvent.underrun);
+    await flushEvents();
+    expect(c.liveDiagnostics.firstPlaybackAcceptedMs, isNotNull);
+    expect(c.liveDiagnostics.underruns, 1);
+    await c.stop();
+    expect(c.liveDiagnostics.audioChunksReceived, 2);
+    c.dispose();
+  });
+
   test('permission denial does not start MIC capture', () async {
     final mic = FakeMicrophone(allowed: false);
     final c = TranslationSessionController(
@@ -298,7 +358,12 @@ class StreamingProgressProvider extends ProgressProvider
   }
 }
 
-class FakeLiveVoice extends FakeVoice implements LiveTranslatedVoiceOutput {
+class FakeLiveVoice extends FakeVoice
+    implements LiveTranslatedVoiceOutput, LiveVoiceEventSource {
+  final _liveEvents = StreamController<LiveVoiceEvent>.broadcast();
+  @override
+  Stream<LiveVoiceEvent> get liveVoiceEvents => _liveEvents.stream;
+  void emitEvent(LiveVoiceEvent event) => _liveEvents.add(event);
   int liveChunks = 0;
   bool stopped = false;
   @override
@@ -311,6 +376,8 @@ class FakeLiveVoice extends FakeVoice implements LiveTranslatedVoiceOutput {
   Future<void> stopLive() async { stopped = true; }
   @override
   Future<void> stop() async { stopped = true; }
+  @override
+  Future<void> dispose() async { await _liveEvents.close(); }
 }
 
 class FailingRecorderMicrophone extends FakeMicrophone {

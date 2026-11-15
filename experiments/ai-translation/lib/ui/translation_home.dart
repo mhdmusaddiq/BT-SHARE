@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../translation/microphone_input.dart';
@@ -523,6 +524,16 @@ class _TranslationHomeState extends State<TranslationHome> {
               const SizedBox(height: 8),
               Text(error, style: const TextStyle(color: Color(0xFFB42318))),
             ],
+            if (kDebugMode && !controller.mockMode &&
+                controller.startedAt != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(
+                  'DEBUG AUDIO TIMING · since MIC stream start (not speech onset)\n'
+                  '${controller.liveDiagnostics.summary}',
+                  style: const TextStyle(fontSize: 11, color: _muted),
+                ),
+              ),
             if (controller.mockMode)
               const Padding(
                 padding: EdgeInsets.only(top: 10),

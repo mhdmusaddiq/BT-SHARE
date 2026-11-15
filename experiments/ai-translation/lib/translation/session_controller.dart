@@ -7,6 +7,65 @@ import 'models.dart';
 import 'translation_provider.dart';
 import 'voice_output.dart';
 
+/// Debug-only phase 2.2 metrics. All values are local monotonic timings
+/// measured since successful MIC stream start, NOT speech-onset or acoustic
+/// first-sound latency. Missing stages remain null; no recordings/text stored.
+class LiveSessionDiagnostics {
+  final Stopwatch _clock = Stopwatch();
+  int? firstMicFrameMs;
+  int? firstTargetCaptionMs;
+  int? firstAudioPacketMs;
+  int? firstPlaybackAcceptedMs;
+  int audioChunksReceived = 0;
+  int underruns = 0;
+
+  void reset() {
+    _clock
+      ..stop()
+      ..reset();
+    firstMicFrameMs = null;
+    firstTargetCaptionMs = null;
+    firstAudioPacketMs = null;
+    firstPlaybackAcceptedMs = null;
+    audioChunksReceived = 0;
+    underruns = 0;
+  }
+
+  void start() {
+    _clock
+      ..reset()
+      ..start();
+  }
+
+  void stop() => _clock.stop();
+
+  int? get _now => _clock.isRunning ? _clock.elapsedMilliseconds : null;
+
+  void markMicFrame() => firstMicFrameMs ??= _now;
+  void markTargetCaption() => firstTargetCaptionMs ??= _now;
+  void markAudioPacket() {
+    audioChunksReceived++;
+    firstAudioPacketMs ??= _now;
+  }
+  void markPlaybackAccepted() => firstPlaybackAcceptedMs ??= _now;
+  void markUnderrun() => underruns++;
+
+  int? get captionToPlaybackAcceptedMs =>
+      firstTargetCaptionMs == null || firstPlaybackAcceptedMs == null
+          ? null
+          : firstPlaybackAcceptedMs! - firstTargetCaptionMs!;
+
+  static String _ms(int? value) => value == null ? '—' : '${value}ms';
+
+  String get summary =>
+      'MIC first frame ${_ms(firstMicFrameMs)} · '
+      'English caption ${_ms(firstTargetCaptionMs)} · '
+      'Audio received ${_ms(firstAudioPacketMs)} · '
+      'Player accepted ${_ms(firstPlaybackAcceptedMs)} · '
+      'Caption→player ${_ms(captionToPlaybackAcceptedMs)} · '
+      'Chunks $audioChunksReceived · Underruns $underruns';
+}
+
 typedef ProviderFactory = TranslationProvider Function();
 
 class TranslationSessionController extends ChangeNotifier {
@@ -44,11 +103,13 @@ class TranslationSessionController extends ChangeNotifier {
   TranslationSegment? get latest => _segments.isEmpty ? null : _segments.last;
   int? get latestMeasuredLatencyMs => latest?.measuredLatencyMs;
   int receivedMicChunks = 0;
+  final LiveSessionDiagnostics liveDiagnostics = LiveSessionDiagnostics();
 
   TranslationProvider? _provider;
   StreamSubscription<Uint8List>? _micSubscription;
   StreamSubscription<TranslationSegment>? _segmentSubscription;
   StreamSubscription<Uint8List>? _liveAudioSubscription;
+  StreamSubscription<LiveVoiceEvent>? _voiceEventsSubscription;
   Future<void> _liveAudioTail = Future<void>.value();
   int _queuedAudioBytes = 0;
   bool streamingAudioAvailable = false;
@@ -144,6 +205,7 @@ class TranslationSessionController extends ChangeNotifier {
     endedAt = null;
     startedAt = null;
     receivedMicChunks = 0;
+    liveDiagnostics.reset();
     streamingAudioAvailable = false;
     _livePlaybackFailed = false;
     _queuedAudioBytes = 0;
@@ -191,6 +253,11 @@ class TranslationSessionController extends ChangeNotifier {
           } else {
             _segments.add(visible);
           }
+          if (!segment.isMock && segment.translated.isNotEmpty &&
+              liveDiagnostics.firstTargetCaptionMs == null) {
+            liveDiagnostics.markTargetCaption();
+            _traceFirst('target_caption', liveDiagnostics.firstTargetCaptionMs);
+          }
           status = AiSessionStatus.translating;
           errorMessage = null;
           if (visible.voiceBytes?.isNotEmpty ?? false) {
@@ -231,8 +298,15 @@ class TranslationSessionController extends ChangeNotifier {
         streamingAudioAvailable = true;
         _liveAudioSubscription = streamingProvider.translatedPcmChunks.listen(
           (Uint8List bytes) {
-            if (!_current(run) || !voiceEnabled || !autoSpeak ||
-                _livePlaybackFailed || voice is! LiveTranslatedVoiceOutput) {
+            if (!_current(run)) return;
+            final first = liveDiagnostics.firstAudioPacketMs == null;
+            liveDiagnostics.markAudioPacket();
+            if (first) {
+              _traceFirst('audio_received', liveDiagnostics.firstAudioPacketMs);
+              _notify();
+            }
+            if (!voiceEnabled || !autoSpeak || _livePlaybackFailed ||
+                voice is! LiveTranslatedVoiceOutput) {
               return;
             }
             // Bound future work queued on Dart isolate and Android audio sink.
@@ -274,6 +348,23 @@ class TranslationSessionController extends ChangeNotifier {
         );
       }
 
+      if (voice case LiveVoiceEventSource events) {
+        _voiceEventsSubscription = events.liveVoiceEvents.listen((event) {
+          if (!_current(run)) return;
+          switch (event) {
+            case LiveVoiceEvent.playbackAccepted:
+              if (liveDiagnostics.firstPlaybackAcceptedMs == null) {
+                liveDiagnostics.markPlaybackAccepted();
+                _traceFirst('playback_accepted',
+                    liveDiagnostics.firstPlaybackAcceptedMs);
+              }
+            case LiveVoiceEvent.underrun:
+              liveDiagnostics.markUnderrun();
+          }
+          _notify();
+        });
+      }
+
       // Only start capturing AFTER the AI gateway is available. The local
       // room's own audio path remains separate and is never modified here.
       startupPhase = 'microphone';
@@ -283,6 +374,7 @@ class TranslationSessionController extends ChangeNotifier {
         return;
       }
       _microphoneStarted = true;
+      liveDiagnostics.start();
       startedAt = DateTime.now();
       status = AiSessionStatus.listening;
       _pulse = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -292,6 +384,10 @@ class TranslationSessionController extends ChangeNotifier {
         (bytes) {
           if (!_current(run)) return;
           receivedMicChunks++;
+          if (receivedMicChunks == 1) {
+            liveDiagnostics.markMicFrame();
+            _traceFirst('mic_first_frame', liveDiagnostics.firstMicFrameMs);
+          }
           unawaited(provider.sendMicrophonePcm(bytes).catchError((Object e) {
             if (_current(run)) {
               unawaited(_fail(run, 'Translation gateway send failed.'));
@@ -334,6 +430,19 @@ class TranslationSessionController extends ChangeNotifier {
     }
   }
 
+  void _traceFirst(String name, int? elapsedMs) {
+    if (kDebugMode && elapsedMs != null) {
+      debugPrint('BT_SHARE_METRIC device_stage=$name elapsed_ms=$elapsedMs');
+    }
+  }
+
+  void _finishDiagnostics() {
+    liveDiagnostics.stop();
+    if (kDebugMode && !mockMode && startedAt != null) {
+      debugPrint('BT_SHARE_METRIC device_summary ${liveDiagnostics.summary}');
+    }
+  }
+
   bool _current(int run) => !_disposed && run == _generation;
 
   Future<void> _cleanup() async {
@@ -351,6 +460,8 @@ class TranslationSessionController extends ChangeNotifier {
     }
     await _liveAudioSubscription?.cancel();
     _liveAudioSubscription = null;
+    await _voiceEventsSubscription?.cancel();
+    _voiceEventsSubscription = null;
     await _liveAudioTail.catchError((Object _) {});
     _queuedAudioBytes = 0;
     await _segmentSubscription?.cancel();
@@ -369,6 +480,7 @@ class TranslationSessionController extends ChangeNotifier {
     if (!_current(run)) return;
     ++_generation;
     endedAt = startedAt == null ? null : DateTime.now();
+    _finishDiagnostics();
     status = AiSessionStatus.unavailable;
     errorMessage = message;
     _notify();
@@ -378,6 +490,7 @@ class TranslationSessionController extends ChangeNotifier {
   Future<void> stop() async {
     ++_generation;
     endedAt = startedAt == null ? null : DateTime.now();
+    _finishDiagnostics();
     status = AiSessionStatus.stopped;
     errorMessage = null;
     _notify();
@@ -428,6 +541,7 @@ class TranslationSessionController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     ++_generation;
+    liveDiagnostics.stop();
     _pulse?.cancel();
     unawaited(_cleanup().then((_) => microphone.dispose()).then(
           (_) => voice.dispose(),

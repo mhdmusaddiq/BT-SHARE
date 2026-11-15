@@ -21,10 +21,24 @@ abstract class LiveTranslatedVoiceOutput {
   Future<void> stopLive();
 }
 
+/// Native PCM playback events. 'Playback accepted' is NOT proof that
+/// sound has reached the speaker; AudioTrack hardware delay is unmeasured.
+enum LiveVoiceEvent { playbackAccepted, underrun }
+
+abstract class LiveVoiceEventSource {
+  Stream<LiveVoiceEvent> get liveVoiceEvents;
+}
+
 class DeviceTranslatedVoiceOutput
-    implements TranslatedVoiceOutput, LiveTranslatedVoiceOutput {
+    implements TranslatedVoiceOutput, LiveTranslatedVoiceOutput, LiveVoiceEventSource {
   final FlutterTts _tts = FlutterTts();
   final AudioPlayer _player = AudioPlayer();
+  final StreamController<LiveVoiceEvent> _events =
+      StreamController<LiveVoiceEvent>.broadcast();
+
+  @override
+  Stream<LiveVoiceEvent> get liveVoiceEvents => _events.stream;
+
   AudioStreamPlayer? _live;
   StreamSubscription<void>? _liveUnderrunSubscription;
   Timer? _liveStartupTimer;
@@ -102,6 +116,7 @@ class DeviceTranslatedVoiceOutput
     _liveUnderrunSubscription = live.onUnderrun.listen((_) {
       if (_live != live) return;
       _liveUnderrunCount++;
+      if (!_events.isClosed) _events.add(LiveVoiceEvent.underrun);
       if (kDebugMode) {
         // No microphone content, translations, identifiers or tokens logged.
         debugPrint('BT SHARE realtime audio underrun: #$_liveUnderrunCount');
@@ -117,6 +132,9 @@ class DeviceTranslatedVoiceOutput
     _livePlaybackStarted = true;
     try {
       await live.play();
+      if (_live == live && !_events.isClosed) {
+        _events.add(LiveVoiceEvent.playbackAccepted);
+      }
     } on Object {
       _livePlaybackStarted = false;
       rethrow;
@@ -187,5 +205,6 @@ class DeviceTranslatedVoiceOutput
   Future<void> dispose() async {
     await stop();
     await _player.dispose();
+    await _events.close();
   }
 }
