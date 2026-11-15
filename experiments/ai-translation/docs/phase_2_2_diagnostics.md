@@ -119,3 +119,10 @@ symptom was two failing segmented contract assertions (`error` instead of
 This changes **only test configuration**, not gateway runtime engine selection.
 Two informational Flutter lints in `voice_output.dart` were also cleaned:
 redundant `dart:typed_data` import and conditional timer assignment.
+
+## Follow-up: provider first audio-to-caption ordering
+
+Phase 2.3 adds a `caption_minus_audio` gateway stage (first target
+caption minus first provider audio, measured on the same Python clock).
+The five sessions and their interpretation are documented in
+[Phase 2.3 Audio Continuity](phase_2_3_audio_continuity.md).

@@ -568,3 +568,11 @@ Opt-in gateway metrics and Flutter debug timings are documented in
 [Phase 2.2 Diagnostics](docs/phase_2_2_diagnostics.md). This feature
 instruments the current streaming pipeline; it is not a fixed-voice or
 low-latency architecture change. Android test is pending.
+
+## Phase 2.3 — Audio continuity and provider caption gap (2026-11-15)
+
+User-reported real gateway logs show first provider audio arrived around
+0.7s after first audio send while target caption deltas arrived 2.5–4.7s
+later. Opt-in per-stream adaptive startup buffering and debug-only MIC
+pause/resume counts were added without changing caption/audio processing.
+See [Phase 2.3 Audio Continuity](docs/phase_2_3_audio_continuity.md).
