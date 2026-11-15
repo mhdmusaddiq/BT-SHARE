@@ -341,12 +341,47 @@ class TranslationSessionController extends ChangeNotifier {
               }
               try {
                 await (voice as LiveTranslatedVoiceOutput).pushLive(bytes);
-              } on Object {
+              } on Object catch (error) {
+                if (!_current(run)) return;
                 _livePlaybackFailed = true;
-                playbackError = 'Live PCM playback failed on this device. '
-                    'Turn off automatic voice or switch to segmented mode.';
+                if (error is LivePcmPlaybackFailure) {
+                  playbackError = switch (error.stage) {
+                    LivePcmFailureStage.excessiveBacklog =>
+                      'Translated voice buffer exceeded 2 seconds '
+                      '(${error.bufferedMs ?? 0}ms). Audio playback is '
+                      'falling behind; stop and restart translation.',
+                    LivePcmFailureStage.initialization =>
+                      'Android PCM player initialization failed. '
+                      'Check audio output routing and restart translation.',
+                    LivePcmFailureStage.bufferQuery =>
+                      'Android PCM buffer status failed. '
+                      'Restart translation and check device audio routing.',
+                    LivePcmFailureStage.feed =>
+                      'Android PCM audio feed failed. '
+                      'Restart translation and check Flutter debug logs.',
+                    LivePcmFailureStage.playbackStart =>
+                      'Android PCM playback start failed. '
+                      'Check media volume/audio routing and restart.',
+                  };
+                  if (kDebugMode) {
+                    debugPrint('BT_SHARE_PCM failure_stage=${error.stage.name} '
+                        'buffered_ms=${error.bufferedMs ?? -1}');
+                  }
+                } else {
+                  playbackError = 'Live PCM playback failed unexpectedly. '
+                      'Restart translation and inspect Flutter logs.';
+                  if (kDebugMode) {
+                    debugPrint('BT_SHARE_PCM failure_stage=unknown '
+                        'failure_type=${error.runtimeType}');
+                  }
+                }
                 _notify();
-                await voice.stop();
+                try {
+                  await voice.stop();
+                } on Object {
+                  // Preserve the playback failure rather than poisoning the
+                  // serialized PCM task tail with a secondary cleanup error.
+                }
               }
             }).whenComplete(() {
               _queuedAudioBytes -= bytes.length;

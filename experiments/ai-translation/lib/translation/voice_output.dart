@@ -21,6 +21,23 @@ abstract class LiveTranslatedVoiceOutput {
   Future<void> stopLive();
 }
 
+/// Explicit categories for failures in the Android PCM streaming pipeline.
+/// Never attach raw exception messages, samples, transcripts, or credentials.
+enum LivePcmFailureStage {
+  initialization,
+  bufferQuery,
+  excessiveBacklog,
+  feed,
+  playbackStart,
+}
+
+class LivePcmPlaybackFailure implements Exception {
+  const LivePcmPlaybackFailure(this.stage, {this.bufferedMs});
+
+  final LivePcmFailureStage stage;
+  final int? bufferedMs;
+}
+
 /// Native PCM playback events. 'Playback accepted' is NOT proof that
 /// sound has reached the speaker; AudioTrack hardware delay is unmeasured.
 enum LiveVoiceEvent { playbackAccepted, underrun }
@@ -167,41 +184,65 @@ class DeviceTranslatedVoiceOutput
   @override
   Future<void> pushLive(Uint8List pcm16) async {
     if (pcm16.isEmpty || pcm16.length.isOdd) {
-      throw StateError('Invalid realtime PCM16 data.');
+      throw const LivePcmPlaybackFailure(LivePcmFailureStage.feed);
     }
-    await startLive();
-    final live = _live;
-    if (live == null) return;
-    final before = await live.bufferedDuration();
-    if (_live != live) return; // Stop or mute during asynchronous native call.
-    // Never let queued translated voice drift multiple seconds behind speech.
-    if (before > const Duration(seconds: 2)) {
-      _startupPolicy.discardStream();
-      await stopLive();
-      throw StateError('Translated audio buffer exceeded 2 seconds.');
-    }
-    await live.feed(pcm16);
-    if (_live != live) return;
-    _startupPolicy.recordChunk();
-    if (_livePlaybackStarted) return;
-    final ready = await live.bufferedDuration();
-    if (_live != live || _livePlaybackStarted) return;
-    if (ready >= Duration(milliseconds: _startupPolicy.targetMs)) {
-      // A few PCM frames have arrived; start playout with gap protection.
-      await _beginLivePlayback(live);
-    } else {
-      // Very short utterances must still play if no more chunks arrive.
-      _liveStartupTimer ??= Timer(_maximumStartupWait, () {
-        _liveStartupTimer = null;
-        if (_live == live && !_livePlaybackStarted) {
-          unawaited(_beginLivePlayback(live).catchError((Object error) {
-            if (kDebugMode) {
-              debugPrint('BT SHARE realtime audio start failed: '
-                  '${error.runtimeType}');
-            }
-          }));
+    var stage = LivePcmFailureStage.initialization;
+    int? lastBufferedMs;
+    try {
+      await startLive();
+      final live = _live;
+      if (live == null) return;
+
+      stage = LivePcmFailureStage.bufferQuery;
+      final before = await live.bufferedDuration();
+      lastBufferedMs = before.inMilliseconds;
+      if (_live != live) return; // Muted or stopped while native call pending.
+
+      // audio_stream_player buffers PCM without a fixed capacity. Never allow
+      // a delayed output track to accumulate minutes of stale translation.
+      if (before > const Duration(seconds: 2)) {
+        _startupPolicy.discardStream();
+        try {
+          await stopLive();
+        } on Object {
+          // Keep the original backlog cause even if cleanup also fails.
         }
-      });
+        throw LivePcmPlaybackFailure(
+          LivePcmFailureStage.excessiveBacklog,
+          bufferedMs: before.inMilliseconds,
+        );
+      }
+
+      stage = LivePcmFailureStage.feed;
+      await live.feed(pcm16);
+      if (_live != live) return;
+      _startupPolicy.recordChunk();
+      if (_livePlaybackStarted) return;
+
+      stage = LivePcmFailureStage.bufferQuery;
+      final ready = await live.bufferedDuration();
+      if (_live != live || _livePlaybackStarted) return;
+      if (ready >= Duration(milliseconds: _startupPolicy.targetMs)) {
+        stage = LivePcmFailureStage.playbackStart;
+        await _beginLivePlayback(live);
+      } else {
+        _liveStartupTimer ??= Timer(_maximumStartupWait, () {
+          _liveStartupTimer = null;
+          if (_live == live && !_livePlaybackStarted) {
+            unawaited(_beginLivePlayback(live).catchError((Object error) {
+              if (kDebugMode) {
+                // Report only the stage and exception type, not raw messages.
+                debugPrint('BT_SHARE_PCM stage=playbackStart '
+                    'failure_type=${error.runtimeType}');
+              }
+            }));
+          }
+        });
+      }
+    } on LivePcmPlaybackFailure {
+      rethrow;
+    } on Object {
+      throw LivePcmPlaybackFailure(stage, bufferedMs: lastBufferedMs);
     }
   }
 

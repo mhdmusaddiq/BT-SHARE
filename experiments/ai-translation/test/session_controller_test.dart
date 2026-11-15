@@ -47,6 +47,61 @@ class FakeVoice implements TranslatedVoiceOutput {
 Future<void> flushEvents() => Future<void>.delayed(const Duration(milliseconds: 20));
 
 void main() {
+  test('phase 2.3 known backlog has actionable error, captions remain',
+      () async {
+    final mic = FakeMicrophone();
+    final provider = StreamingProgressProvider();
+    final voice = FailingLiveVoice(
+      const LivePcmPlaybackFailure(
+        LivePcmFailureStage.excessiveBacklog, bufferedMs: 2250,
+      ),
+    );
+    final c = TranslationSessionController(
+      microphone: mic, providerFactory: () => provider, voice: voice,
+    );
+    c.setCloudConsentGiven(true);
+    c.setAutoSpeak(true);
+    await c.start();
+    provider.emitAudio(Uint8List(9600));
+    await flushEvents();
+    expect(c.playbackError, contains('2250ms'));
+    expect(c.playbackError, contains('buffer'));
+    expect(c.status, AiSessionStatus.listening);
+    provider.send(TranslationSegment(
+      id: 'live-current',
+      original: 'வணக்கம்',
+      translated: 'Hello',
+      receivedAt: DateTime.now(),
+      isMock: false,
+      streamingAudio: true,
+    ));
+    await flushEvents();
+    expect(c.latest?.translated, 'Hello');
+    await c.stop();
+    c.dispose();
+  });
+
+  test('phase 2.3 native feed failure is distinguished from backlog',
+      () async {
+    final mic = FakeMicrophone();
+    final provider = StreamingProgressProvider();
+    final voice = FailingLiveVoice(
+      const LivePcmPlaybackFailure(LivePcmFailureStage.feed),
+    );
+    final c = TranslationSessionController(
+      microphone: mic, providerFactory: () => provider, voice: voice,
+    );
+    c.setCloudConsentGiven(true);
+    c.setAutoSpeak(true);
+    await c.start();
+    provider.emitAudio(Uint8List(9600));
+    await flushEvents();
+    expect(c.playbackError, contains('audio feed failed'));
+    expect(c.playbackError, isNot(contains('buffer exceeded')));
+    await c.stop();
+    c.dispose();
+  });
+
   test('phase 2.2 audio diagnostics reset, count and maintain monotonic origin',
       () async {
     final d = LiveSessionDiagnostics();
@@ -381,6 +436,14 @@ class FakeLiveVoice extends FakeVoice
   Future<void> stop() async { stopped = true; }
   @override
   Future<void> dispose() async { await _liveEvents.close(); }
+}
+
+class FailingLiveVoice extends FakeLiveVoice {
+  FailingLiveVoice(this.failure);
+  final LivePcmPlaybackFailure failure;
+
+  @override
+  Future<void> pushLive(Uint8List pcm16) async => throw failure;
 }
 
 class FailingRecorderMicrophone extends FakeMicrophone {

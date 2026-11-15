@@ -123,3 +123,27 @@ pipeline with stable phrase commits; this is not yet built.
 Rollback: remove `BT_LIVE_VOICE_ADAPTIVE_STARTUP` flag to get the
 previous fixed 320ms startup threshold. Turn off `BT_AI_DIAGNOSTICS`
 for fewer Python logs; MIC activity counters only show in debug builds.
+
+## Follow-up: Redmi Note 9 Pro red PCM failure (2026-11-15)
+
+User's Flutter debug screenshot: target caption 4336ms, first PCM received
+1094ms, player accepted 1245ms, 1030 packets, 0 underruns, and a RED
+`Live PCM playback failed on this device` banner. Initial play() acceptance
+does not prove audible sound. The original banner was emitted for ALL
+`pushLive` exceptions, including the intentional >2s buffered PCM limit.
+The screenshot cannot distinguish buffer backlog from native Android errors.
+
+This patch introduces stable error categories (no raw platform messages,
+transcripts, PCM or provider credentials): `initialization`, `bufferQuery`,
+`excessiveBacklog`, `feed`, `playbackStart`. In debug Flutter console,
+look for `BT_SHARE_PCM failure_stage=... buffered_ms=...`.
+A backlog displays its observed buffered duration; native failures display
+their stage. Both stop the affected playback stream while keeping captions
+running. The 2-second safety bound is retained; PCM samples are not silently
+dropped, and no automatic voice stream reset is attempted.
+
+**Verify**: pull latest `Sihan-Member-3`, run `flutter analyze` and
+`flutter test`, then restart Flutter; run for a comparable 20–30 seconds
+and share only the red error text and `BT_SHARE_PCM` console lines.
+These are diagnostic changes, not a confirmed repair of physical audio
+routing. A no-underrun result does not exclude buffer backlog.
