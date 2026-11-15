@@ -10,6 +10,9 @@ from gateway.app import app, TranslationPipeline
 def test_fast_websocket_sends_caption_before_voice(monkeypatch):
     monkeypatch.setenv("BT_DEV_GATEWAY_TOKEN", "unit-test-token")
     monkeypatch.setenv("OPENAI_API_KEY", "fake-no-charge-key")
+    # Explicitly select the mode under test; do not inherit a running
+    # realtime gateway setting from the developer PowerShell process.
+    monkeypatch.setenv("BT_AI_CAPTION_ENGINE", "segmented")
     monkeypatch.setenv("BT_AI_LATENCY_MODE", "fast")
     monkeypatch.setenv("BT_AI_TTS_FORMAT", "mp3")
     calls = []
@@ -69,6 +72,9 @@ def test_fast_websocket_sends_caption_before_voice(monkeypatch):
 def test_wav_rollback_mode_keeps_original_audio_contract(monkeypatch):
     monkeypatch.setenv("BT_DEV_GATEWAY_TOKEN", "unit-test-token")
     monkeypatch.setenv("OPENAI_API_KEY", "fake-no-charge-key")
+    # Explicitly select the mode under test; do not inherit a running
+    # realtime gateway setting from the developer PowerShell process.
+    monkeypatch.setenv("BT_AI_CAPTION_ENGINE", "segmented")
     monkeypatch.setenv("BT_AI_LATENCY_MODE", "stable")
     monkeypatch.setenv("BT_AI_TTS_FORMAT", "wav")
 

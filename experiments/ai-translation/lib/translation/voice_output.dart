@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:audio_stream_player/audio_stream_player.dart';
@@ -163,9 +162,9 @@ class DeviceTranslatedVoiceOutput
     if (ready >= _minimumStartupBuffer) {
       // A few PCM frames have arrived; start playout with gap protection.
       await _beginLivePlayback(live);
-    } else if (_liveStartupTimer == null) {
+    } else {
       // Very short utterances must still play if no more chunks arrive.
-      _liveStartupTimer = Timer(_maximumStartupWait, () {
+      _liveStartupTimer ??= Timer(_maximumStartupWait, () {
         _liveStartupTimer = null;
         if (_live == live && !_livePlaybackStarted) {
           unawaited(_beginLivePlayback(live).catchError((Object error) {

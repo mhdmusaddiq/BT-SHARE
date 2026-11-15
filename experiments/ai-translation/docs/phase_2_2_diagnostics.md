@@ -107,3 +107,15 @@ assume this test proves why fixed voices change across pauses.
 `BT_AI_DIAGNOSTICS=0` turns off Python timing logs without code rollback;
 Flutter timing panel appears only in debug builds. To roll back code, revert
 the Phase 2.2 commits on the same branch; do not alter main/development.
+
+## Test isolation fix — segmented tests under a realtime PowerShell session
+
+The segmented WebSocket tests in `gateway/test_fast_websocket.py` now set
+`BT_AI_CAPTION_ENGINE=segmented` explicitly per test using pytest's
+`monkeypatch`. This prevents accidental inheritance of the parent
+PowerShell terminal's `BT_AI_CAPTION_ENGINE=realtime` setting. The previous
+symptom was two failing segmented contract assertions (`error` instead of
+`ready`, and missing `tts_audio_format`) while other tests passed.
+This changes **only test configuration**, not gateway runtime engine selection.
+Two informational Flutter lints in `voice_output.dart` were also cleaned:
+redundant `dart:typed_data` import and conditional timer assignment.
