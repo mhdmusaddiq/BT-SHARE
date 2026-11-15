@@ -43,10 +43,10 @@ class DeviceTranslatedVoiceOutput
     defaultValue: 600,
   );
   static final Duration _minimumStartupBuffer = Duration(
-    milliseconds: _requestedPrebufferMs.clamp(100, 750),
+    milliseconds: _requestedPrebufferMs.clamp(100, 750).toInt(),
   );
   static final Duration _maximumStartupWait = Duration(
-    milliseconds: _requestedMaxWaitMs.clamp(200, 1200),
+    milliseconds: _requestedMaxWaitMs.clamp(200, 1200).toInt(),
   );
 
   @visibleForTesting
