@@ -127,6 +127,7 @@ class TranslationSessionController extends ChangeNotifier {
   Future<void> _liveAudioTail = Future<void>.value();
   int _queuedAudioBytes = 0;
   bool streamingAudioAvailable = false;
+  bool? outputAudioPaced;
   bool _livePlaybackFailed = false;
   Timer? _pulse;
   int _generation = 0;
@@ -222,6 +223,7 @@ class TranslationSessionController extends ChangeNotifier {
     liveDiagnostics.reset();
     speechActivity.reset();
     streamingAudioAvailable = false;
+    outputAudioPaced = null;
     _livePlaybackFailed = false;
     _queuedAudioBytes = 0;
     _liveAudioTail = Future<void>.value();
@@ -300,6 +302,8 @@ class TranslationSessionController extends ChangeNotifier {
       startupPhase = 'gateway';
       await provider.connect(source: source, target: target);
       if (!_current(run)) return;
+      outputAudioPaced = provider is GatewayAudioPacingInfo
+          ? provider.outputAudioPaced : null;
       // `TranslationProvider` and `StreamingTranslationProvider` are
       // independent interfaces. Keep an explicitly typed reference for
       // Dart flow analysis instead of relying on intersection promotion.

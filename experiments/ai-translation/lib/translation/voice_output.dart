@@ -51,6 +51,9 @@ abstract class LiveVoiceEventSource {
 abstract class LiveVoiceBufferInfo {
   bool get adaptiveStartupEnabled;
   int get currentStartupBufferMs;
+  int get lastBufferedMs;
+  int get peakBufferedMs;
+  String get nativePlaybackState;
 }
 
 class DeviceTranslatedVoiceOutput
@@ -66,6 +69,18 @@ class DeviceTranslatedVoiceOutput
 
   AudioStreamPlayer? _live;
   StreamSubscription<void>? _liveUnderrunSubscription;
+  StreamSubscription<dynamic>? _liveStateSubscription;
+  String _nativePlaybackState = 'not-created';
+  int _lastBufferedMs = 0;
+  int _peakBufferedMs = 0;
+  int _bufferSamples = 0;
+
+  @override
+  int get lastBufferedMs => _lastBufferedMs;
+  @override
+  int get peakBufferedMs => _peakBufferedMs;
+  @override
+  String get nativePlaybackState => _nativePlaybackState;
   Timer? _liveStartupTimer;
   bool _livePlaybackStarted = false;
   int _liveUnderrunCount = 0;
@@ -150,6 +165,17 @@ class DeviceTranslatedVoiceOutput
     );
     _live = live;
     _startupPolicy.beginStream();
+    _nativePlaybackState = 'created';
+    _lastBufferedMs = 0;
+    _peakBufferedMs = 0;
+    _bufferSamples = 0;
+    _liveStateSubscription = live.onStateChanged.listen((state) {
+      if (_live != live) return;
+      _nativePlaybackState = state.name;
+      if (kDebugMode) {
+        debugPrint('BT_SHARE_PCM native_state=${state.name}');
+      }
+    });
     _livePlaybackStarted = false;
     _liveUnderrunCount = 0;
     _liveUnderrunSubscription = live.onUnderrun.listen((_) {
@@ -196,6 +222,15 @@ class DeviceTranslatedVoiceOutput
       stage = LivePcmFailureStage.bufferQuery;
       final before = await live.bufferedDuration();
       lastBufferedMs = before.inMilliseconds;
+      _lastBufferedMs = before.inMilliseconds;
+      if (_lastBufferedMs > _peakBufferedMs) {
+        _peakBufferedMs = _lastBufferedMs;
+      }
+      _bufferSamples++;
+      if (kDebugMode && _bufferSamples % 40 == 0) {
+        debugPrint('BT_SHARE_PCM buffer_ms=$_lastBufferedMs '
+            'peak_ms=$_peakBufferedMs native_state=$_nativePlaybackState');
+      }
       if (_live != live) return; // Muted or stopped while native call pending.
 
       // audio_stream_player buffers PCM without a fixed capacity. Never allow
@@ -253,7 +288,10 @@ class DeviceTranslatedVoiceOutput
     _livePlaybackStarted = false;
     final live = _live;
     _live = null;
+    _nativePlaybackState = 'stopped';
     if (live != null) _startupPolicy.finishStream();
+    await _liveStateSubscription?.cancel();
+    _liveStateSubscription = null;
     await _liveUnderrunSubscription?.cancel();
     _liveUnderrunSubscription = null;
     if (live != null) {

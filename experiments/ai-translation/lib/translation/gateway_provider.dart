@@ -10,7 +10,8 @@ import 'translation_provider.dart';
 /// BT SHARE MIC-only segmented translation adapter. Vendor credentials
 /// remain on the gateway server, never inside the Flutter application.
 class GatewayTranslationProvider
-    implements TranslationProvider, StreamingTranslationProvider {
+    implements TranslationProvider, StreamingTranslationProvider,
+        GatewayAudioPacingInfo {
   GatewayTranslationProvider({
     required this.endpoint,
     this.ephemeralSessionToken = '',
@@ -32,7 +33,11 @@ class GatewayTranslationProvider
   int _sequence = 0;
   bool _captionOnly = false;
   bool _streamingAudio = false;
+  bool? _outputAudioPaced;
   int _audioSequence = 0;
+
+  @override
+  bool? get outputAudioPaced => _outputAudioPaced;
 
   @override
   bool get supportsStreamingAudio => _streamingAudio;
@@ -154,6 +159,11 @@ class GatewayTranslationProvider
         }
         _captionOnly = decoded['caption_only'] == true;
         _streamingAudio = decoded['streaming_audio'] == true;
+        final advertised = decoded['output_audio_paced'];
+        _outputAudioPaced = advertised is bool ? advertised : null;
+        if (kDebugMode) {
+          debugPrint('BT_SHARE_PCM gateway_pacing=${_outputAudioPaced ?? 'unknown'}');
+        }
         if (_handshake case final waiter?) {
           if (!waiter.isCompleted) waiter.complete();
         }

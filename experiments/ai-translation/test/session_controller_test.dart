@@ -47,6 +47,15 @@ class FakeVoice implements TranslatedVoiceOutput {
 Future<void> flushEvents() => Future<void>.delayed(const Duration(milliseconds: 20));
 
 void main() {
+  test('phase 2.3.2 gateway pacing metadata remains optional', () {
+    final diagnostics = LiveSessionDiagnostics();
+    diagnostics.reset();
+    expect(diagnostics.firstAudioPacketMs, isNull);
+    // GatewayAudioPacingInfo is intentionally optional for fake providers
+    // and old WebSocket ready frames. Unknown is not evidence of pacing OFF.
+    expect(FakeVoice() is LiveVoiceBufferInfo, isFalse);
+  });
+
   test('phase 2.3 known backlog has actionable error, captions remain',
       () async {
     final mic = FakeMicrophone();

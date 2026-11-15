@@ -17,6 +17,12 @@ abstract class TranslationProvider {
   Future<void> close();
 }
 
+/// Optional diagnostics advertised by the gateway's ready handshake.
+/// A missing field means an old gateway and must remain UNKNOWN, not OFF.
+abstract class GatewayAudioPacingInfo {
+  bool? get outputAudioPaced;
+}
+
 /// Optional live PCM output alongside ordinary caption segments.
 abstract class StreamingTranslationProvider {
   bool get supportsStreamingAudio;

@@ -534,7 +534,11 @@ class _TranslationHomeState extends State<TranslationHome> {
                   '${controller.liveDiagnostics.summary}\n'
                   'MIC activity (energy heuristic): ${controller.speechActivity.summary}\n'
                   'Startup buffer: ${controller.voice is LiveVoiceBufferInfo ? (controller.voice as LiveVoiceBufferInfo).currentStartupBufferMs : '—'}ms '
-                  '(${controller.voice is LiveVoiceBufferInfo && (controller.voice as LiveVoiceBufferInfo).adaptiveStartupEnabled ? 'adaptive' : 'fixed'})',
+                  '(${controller.voice is LiveVoiceBufferInfo && (controller.voice as LiveVoiceBufferInfo).adaptiveStartupEnabled ? 'adaptive' : 'fixed'})\n'
+                  'Gateway paced audio: ${controller.outputAudioPaced == null ? 'UNKNOWN' : controller.outputAudioPaced! ? 'ON' : 'OFF'}\n'
+                  'Native PCM: ${controller.voice is LiveVoiceBufferInfo ? (controller.voice as LiveVoiceBufferInfo).nativePlaybackState : 'unknown'}'
+                  ' · Buffer ${controller.voice is LiveVoiceBufferInfo ? (controller.voice as LiveVoiceBufferInfo).lastBufferedMs : 0}ms'
+                  ' · Peak ${controller.voice is LiveVoiceBufferInfo ? (controller.voice as LiveVoiceBufferInfo).peakBufferedMs : 0}ms',
                   style: const TextStyle(fontSize: 11, color: _muted),
                 ),
               ),
