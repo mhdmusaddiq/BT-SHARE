@@ -23,6 +23,22 @@ abstract class GatewayAudioPacingInfo {
   bool? get outputAudioPaced;
 }
 
+/// Non-content telemetry: PCM duration not yet sent over the gateway socket.
+/// These values are not acoustic latency or model inference latency.
+class GatewayAudioQueueSnapshot {
+  const GatewayAudioQueueSnapshot({
+    required this.pendingAudioMs,
+    required this.sentAudioMs,
+  });
+
+  final int pendingAudioMs;
+  final int sentAudioMs;
+}
+
+abstract class GatewayAudioQueueInfo {
+  Stream<GatewayAudioQueueSnapshot> get audioQueueMetrics;
+}
+
 /// Optional live PCM output alongside ordinary caption segments.
 abstract class StreamingTranslationProvider {
   bool get supportsStreamingAudio;

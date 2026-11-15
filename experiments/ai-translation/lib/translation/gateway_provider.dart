@@ -11,7 +11,7 @@ import 'translation_provider.dart';
 /// remain on the gateway server, never inside the Flutter application.
 class GatewayTranslationProvider
     implements TranslationProvider, StreamingTranslationProvider,
-        GatewayAudioPacingInfo {
+        GatewayAudioPacingInfo, GatewayAudioQueueInfo {
   GatewayTranslationProvider({
     required this.endpoint,
     this.ephemeralSessionToken = '',
@@ -26,6 +26,11 @@ class GatewayTranslationProvider
       StreamController<TranslationSegment>.broadcast();
   final StreamController<Uint8List> _audio =
       StreamController<Uint8List>.broadcast();
+  final StreamController<GatewayAudioQueueSnapshot> _audioQueue =
+      StreamController<GatewayAudioQueueSnapshot>.broadcast();
+
+  @override
+  Stream<GatewayAudioQueueSnapshot> get audioQueueMetrics => _audioQueue.stream;
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
   bool _connected = false;
@@ -179,6 +184,24 @@ class GatewayTranslationProvider
         if (!_events.isClosed) _events.addError(reason);
         return;
       }
+      if (decoded['type'] == 'audio_metrics') {
+        if (_audioQueue.isClosed || decoded['source_mode'] != translationSourceMode) {
+          return;
+        }
+        final pending = decoded['pending_audio_ms'];
+        final sent = decoded['sent_audio_ms'];
+        if (pending is int && sent is int &&
+            pending >= 0 && pending <= 20000 &&
+            sent >= 0 && sent <= 1200000) {
+          _audioQueue.add(GatewayAudioQueueSnapshot(
+            pendingAudioMs: pending,
+            sentAudioMs: sent,
+          ));
+        }
+        // Diagnostic event is optional; ignore unknown/malformed metrics
+        // rather than interrupting working translations or live voice.
+        return;
+      }
       if (decoded['type'] == 'audio_delta') {
         if (!_streamingAudio || _audio.isClosed) return;
         final next = decoded['sequence'];
@@ -257,6 +280,7 @@ class GatewayTranslationProvider
     await _subscription?.cancel();
     await _channel?.sink.close();
     await _audio.close();
+    await _audioQueue.close();
     await _events.close();
   }
 }

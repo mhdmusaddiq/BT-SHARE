@@ -47,6 +47,43 @@ class FakeVoice implements TranslatedVoiceOutput {
 Future<void> flushEvents() => Future<void>.delayed(const Duration(milliseconds: 20));
 
 void main() {
+  test('phase 2.3.3 audio inter-packet gap records only when clock running',
+      () async {
+    final metrics = LiveSessionDiagnostics();
+    metrics.markAudioPacket();
+    expect(metrics.audioChunksReceived, 1);
+    expect(metrics.longestInterPacketGapMs, 0);
+    metrics.reset();
+    metrics.start();
+    metrics.markAudioPacket();
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    metrics.markAudioPacket();
+    expect(metrics.audioInterPacketGapsOver400Ms, 1);
+    expect(metrics.longestInterPacketGapMs, greaterThanOrEqualTo(400));
+    metrics.reset();
+    expect(metrics.audioInterPacketGapsOver400Ms, 0);
+  });
+
+  test('phase 2.3.3 gateway queue updates are optional and non-content', () async {
+    final provider = FakeAudioQueueProvider();
+    final mic = FakeMicrophone();
+    final c = TranslationSessionController(
+      microphone: mic,
+      providerFactory: () => provider,
+      voice: FakeLiveVoice(),
+    );
+    c.setCloudConsentGiven(true);
+    await c.start();
+    provider.emitQueue(const GatewayAudioQueueSnapshot(
+      pendingAudioMs: 2100, sentAudioMs: 4000,
+    ));
+    await flushEvents();
+    expect(c.gatewayPendingAudioMs, 2100);
+    expect(c.gatewaySentAudioMs, 4000);
+    await c.stop();
+    c.dispose();
+  });
+
   test('phase 2.3.2 controller displays advertised gateway pacing', () async {
     final provider = PacedStreamingProgressProvider(true);
     final controller = TranslationSessionController(
@@ -441,6 +478,19 @@ class StreamingProgressProvider extends ProgressProvider
   @override
   Future<void> close() async {
     await _pcm.close();
+    await super.close();
+  }
+}
+
+class FakeAudioQueueProvider extends StreamingProgressProvider
+    implements GatewayAudioQueueInfo {
+  final _queue = StreamController<GatewayAudioQueueSnapshot>.broadcast();
+  @override
+  Stream<GatewayAudioQueueSnapshot> get audioQueueMetrics => _queue.stream;
+  void emitQueue(GatewayAudioQueueSnapshot item) => _queue.add(item);
+  @override
+  Future<void> close() async {
+    await _queue.close();
     await super.close();
   }
 }

@@ -19,6 +19,9 @@ class LiveSessionDiagnostics {
   int? firstPlaybackAcceptedMs;
   int audioChunksReceived = 0;
   int underruns = 0;
+  int audioInterPacketGapsOver400Ms = 0;
+  int longestInterPacketGapMs = 0;
+  int? _lastAudioPacketMs;
 
   void reset() {
     _clock
@@ -30,6 +33,9 @@ class LiveSessionDiagnostics {
     firstPlaybackAcceptedMs = null;
     audioChunksReceived = 0;
     underruns = 0;
+    audioInterPacketGapsOver400Ms = 0;
+    longestInterPacketGapMs = 0;
+    _lastAudioPacketMs = null;
   }
 
   void start() {
@@ -45,8 +51,19 @@ class LiveSessionDiagnostics {
   void markMicFrame() { firstMicFrameMs ??= _now; }
   void markTargetCaption() { firstTargetCaptionMs ??= _now; }
   void markAudioPacket() {
+    final now = _now;
     audioChunksReceived++;
-    firstAudioPacketMs ??= _now;
+    firstAudioPacketMs ??= now;
+    if (now != null && _lastAudioPacketMs != null) {
+      final delta = now - _lastAudioPacketMs!;
+      if (delta > 400) {
+        audioInterPacketGapsOver400Ms++;
+        if (delta > longestInterPacketGapMs) {
+          longestInterPacketGapMs = delta;
+        }
+      }
+    }
+    _lastAudioPacketMs = now;
   }
   void markPlaybackAccepted() { firstPlaybackAcceptedMs ??= _now; }
   void markUnderrun() { underruns++; }
@@ -76,7 +93,9 @@ class LiveSessionDiagnostics {
       'Caption→audio ${_ms(captionToAudioReceivedMs)} · '
       'Audio→player ${_ms(audioReceivedToPlaybackAcceptedMs)} · '
       'Caption→player ${_ms(captionToPlaybackAcceptedMs)} · '
-      'Chunks $audioChunksReceived · Underruns $underruns';
+      'Chunks $audioChunksReceived · Underruns $underruns · '
+      'Audio gaps >400ms $audioInterPacketGapsOver400Ms '
+      '(longest ${longestInterPacketGapMs}ms)';
 }
 
 typedef ProviderFactory = TranslationProvider Function();
@@ -124,10 +143,13 @@ class TranslationSessionController extends ChangeNotifier {
   StreamSubscription<TranslationSegment>? _segmentSubscription;
   StreamSubscription<Uint8List>? _liveAudioSubscription;
   StreamSubscription<LiveVoiceEvent>? _voiceEventsSubscription;
+  StreamSubscription<GatewayAudioQueueSnapshot>? _audioQueueSubscription;
   Future<void> _liveAudioTail = Future<void>.value();
   int _queuedAudioBytes = 0;
   bool streamingAudioAvailable = false;
   bool? outputAudioPaced;
+  int? gatewayPendingAudioMs;
+  int? gatewaySentAudioMs;
   bool _livePlaybackFailed = false;
   Timer? _pulse;
   int _generation = 0;
@@ -224,6 +246,8 @@ class TranslationSessionController extends ChangeNotifier {
     speechActivity.reset();
     streamingAudioAvailable = false;
     outputAudioPaced = null;
+    gatewayPendingAudioMs = null;
+    gatewaySentAudioMs = null;
     _livePlaybackFailed = false;
     _queuedAudioBytes = 0;
     _liveAudioTail = Future<void>.value();
@@ -304,6 +328,14 @@ class TranslationSessionController extends ChangeNotifier {
       if (!_current(run)) return;
       outputAudioPaced = provider is GatewayAudioPacingInfo
           ? provider.outputAudioPaced : null;
+      if (provider is GatewayAudioQueueInfo) {
+        _audioQueueSubscription = provider.audioQueueMetrics.listen((event) {
+          if (!_current(run)) return;
+          gatewayPendingAudioMs = event.pendingAudioMs;
+          gatewaySentAudioMs = event.sentAudioMs;
+          _notify();
+        });
+      }
       // `TranslationProvider` and `StreamingTranslationProvider` are
       // independent interfaces. Keep an explicitly typed reference for
       // Dart flow analysis instead of relying on intersection promotion.
@@ -515,6 +547,8 @@ class TranslationSessionController extends ChangeNotifier {
     }
     await _liveAudioSubscription?.cancel();
     _liveAudioSubscription = null;
+    await _audioQueueSubscription?.cancel();
+    _audioQueueSubscription = null;
     await _voiceEventsSubscription?.cancel();
     _voiceEventsSubscription = null;
     await _liveAudioTail.catchError((Object _) {});

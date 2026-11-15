@@ -536,6 +536,8 @@ class _TranslationHomeState extends State<TranslationHome> {
                   'Startup buffer: ${controller.voice is LiveVoiceBufferInfo ? (controller.voice as LiveVoiceBufferInfo).currentStartupBufferMs : '—'}ms '
                   '(${controller.voice is LiveVoiceBufferInfo && (controller.voice as LiveVoiceBufferInfo).adaptiveStartupEnabled ? 'adaptive' : 'fixed'})\n'
                   'Gateway paced audio: ${controller.outputAudioPaced == null ? 'UNKNOWN' : controller.outputAudioPaced! ? 'ON' : 'OFF'}\n'
+                  'Gateway pending PCM: ${controller.gatewayPendingAudioMs == null ? '—' : '${controller.gatewayPendingAudioMs}ms'}'
+                  ' · Sent PCM: ${controller.gatewaySentAudioMs == null ? '—' : '${controller.gatewaySentAudioMs}ms'}\n'
                   'Native PCM: ${controller.voice is LiveVoiceBufferInfo ? (controller.voice as LiveVoiceBufferInfo).nativePlaybackState : 'unknown'}'
                   ' · Buffer ${controller.voice is LiveVoiceBufferInfo ? (controller.voice as LiveVoiceBufferInfo).lastBufferedMs : 0}ms'
                   ' · Peak ${controller.voice is LiveVoiceBufferInfo ? (controller.voice as LiveVoiceBufferInfo).peakBufferedMs : 0}ms',
