@@ -43,6 +43,8 @@ The Flutter debug panel shows:
 | `English caption` | First *target* caption (regardless of target language label in current UI) |
 | `Audio received` | First live PCM chunk received at Flutter provider |
 | `Player accepted` | First native player.play() Future completed |
+| `Caption→audio` | First phone audio chunk receipt minus first target caption, can be negative |
+| `Audio→player` | Player acceptance minus first phone audio chunk receipt |
 | `Caption→player` | Local first player acceptance minus first target caption, can be negative |
 | `Chunks` | Number of translated PCM chunks delivered to Flutter |
 | `Underruns` | Number of underrun events reported by native PCM player |

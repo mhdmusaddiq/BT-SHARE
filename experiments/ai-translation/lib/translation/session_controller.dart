@@ -50,6 +50,16 @@ class LiveSessionDiagnostics {
   void markPlaybackAccepted() { firstPlaybackAcceptedMs ??= _now; }
   void markUnderrun() { underruns++; }
 
+  int? get captionToAudioReceivedMs =>
+      firstTargetCaptionMs == null || firstAudioPacketMs == null
+          ? null
+          : firstAudioPacketMs! - firstTargetCaptionMs!;
+
+  int? get audioReceivedToPlaybackAcceptedMs =>
+      firstAudioPacketMs == null || firstPlaybackAcceptedMs == null
+          ? null
+          : firstPlaybackAcceptedMs! - firstAudioPacketMs!;
+
   int? get captionToPlaybackAcceptedMs =>
       firstTargetCaptionMs == null || firstPlaybackAcceptedMs == null
           ? null
@@ -59,9 +69,11 @@ class LiveSessionDiagnostics {
 
   String get summary =>
       'MIC first frame ${_ms(firstMicFrameMs)} · '
-      'English caption ${_ms(firstTargetCaptionMs)} · '
+      'Target caption ${_ms(firstTargetCaptionMs)} · '
       'Audio received ${_ms(firstAudioPacketMs)} · '
       'Player accepted ${_ms(firstPlaybackAcceptedMs)} · '
+      'Caption→audio ${_ms(captionToAudioReceivedMs)} · '
+      'Audio→player ${_ms(audioReceivedToPlaybackAcceptedMs)} · '
       'Caption→player ${_ms(captionToPlaybackAcceptedMs)} · '
       'Chunks $audioChunksReceived · Underruns $underruns';
 }

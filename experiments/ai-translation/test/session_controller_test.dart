@@ -64,8 +64,11 @@ void main() {
     expect(d.firstPlaybackAcceptedMs, isNotNull);
     expect(d.audioChunksReceived, 2);
     expect(d.underruns, 1);
+    expect(d.captionToAudioReceivedMs, isNotNull);
+    expect(d.audioReceivedToPlaybackAcceptedMs, isNotNull);
     expect(d.captionToPlaybackAcceptedMs, isNotNull);
-    expect(d.summary, contains('Caption→player'));
+    expect(d.summary, contains('Caption→audio'));
+    expect(d.summary, contains('Audio→player'));
     d.stop();
     d.reset();
     expect(d.firstAudioPacketMs, isNull);
