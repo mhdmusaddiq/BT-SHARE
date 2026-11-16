@@ -590,3 +590,15 @@ A reversible 100ms vs 200ms PCM relay-frame experiment is described in
 [Phase 2.3.5 Continuity Test](docs/phase_2_3_5_audio_continuity_test.md).
 Use a fixed 500ms Flutter startup buffer for controlled real-device testing.
 This is a playback experiment, not a fixed-voice translation engine.
+
+## Phase 2.4 — Caption → Fixed Voice TTS (experimental)
+
+Selectable in Flutter Settings before starting translation: Direct AI Voice
+(default) or Caption → Fixed Voice TTS. The opt-in mode requires
+`BT_AI_CAPTION_TTS_ENABLED=1` on the Python gateway and uses an
+additional paid OpenAI Speech API request per stable caption phrase.
+The existing MIC-only realtime captions remain unchanged, and TTS never
+mixes provider-generated direct audio with caption-driven PCM.
+
+See [Phase 2.4 Caption-to-TTS Setup](docs/phase_2_4_caption_to_tts.md)
+for the detailed architecture, setup, rollback and A/B test plan.
