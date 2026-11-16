@@ -384,3 +384,125 @@ def test_invalid_output_audio_frame_size_is_rejected_before_cloud(monkeypatch):
             error = ws.receive_json()
             assert error["type"] == "error"
             assert "BT_AI_OUTPUT_FRAME_MS" in error["message"]
+
+
+class FakeFixedVoiceTts:
+    """No network: simulate serial audio synthesis after stable captions."""
+    phrases = []
+
+    def __init__(self, *, key, language, voice, send_pcm):
+        assert key == "fake-provider-key"
+        assert language == "en"
+        assert voice == "alloy"
+        self._send_pcm = send_pcm
+        self._tasks = []
+        self._closed = False
+
+    def start(self):
+        pass
+
+    def check(self):
+        for task in self._tasks:
+            if task.done():
+                task.result()
+
+    def submit(self, phrase):
+        self.phrases.append(phrase)
+        self._tasks.append(asyncio.create_task(self._send_pcm(bytes(4800))))
+
+    async def finish(self, *, timeout=45):
+        if self._tasks:
+            await asyncio.gather(*self._tasks)
+
+    async def cancel(self):
+        for task in self._tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+
+
+def test_caption_tts_mode_emits_audio_from_english_caption_not_provider(monkeypatch):
+    monkeypatch.setenv("BT_DEV_GATEWAY_TOKEN", "unit-test-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-provider-key")
+    monkeypatch.setenv("BT_AI_CAPTION_ENGINE", "realtime")
+    monkeypatch.setenv("BT_AI_REALTIME_VOICE", "1")
+    monkeypatch.setenv("BT_AI_CAPTION_TTS_ENABLED", "1")
+    monkeypatch.setenv("BT_AI_PACE_OUTPUT_AUDIO", "1")
+    fake = FakeRealtimeUpstream()
+    monkeypatch.setattr(realtime, "connect", lambda *a, **kw: fake)
+    monkeypatch.setattr(realtime, "StreamingCaptionTts", FakeFixedVoiceTts)
+    FakeFixedVoiceTts.phrases = []
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/v1/stream") as ws:
+            ws.send_json({
+                "type": "start", "source_mode": "MIC",
+                "source_language": "ta", "target_language": "en",
+                "voice_engine": "caption_tts",
+                "format": "pcm_s16le", "sample_rate_hz": 16000,
+                "channels": 1, "ephemeral_session_token": "unit-test-token",
+            })
+            ready = ws.receive_json()
+            assert ready["type"] == "ready"
+            assert ready["voice_engine"] == "caption_tts"
+            assert ready["streaming_audio"] is True
+            assert ready["audio_frame_ms"] == 100
+            mic = array("h", [1000] * 1600).tobytes()
+            for seq in (1, 2, 3):
+                ws.send_json({
+                    "type": "audio", "source_mode": "MIC",
+                    "sequence": seq,
+                    "pcm16_base64": base64.b64encode(mic).decode("ascii"),
+                })
+            seen_caption = False
+            seen_audio = False
+            for _ in range(12):
+                event = ws.receive_json()
+                if event["type"] == "segment":
+                    seen_caption |= event["translated_text"] == "Hello"
+                if event["type"] == "audio_delta":
+                    seen_audio = True
+                    assert event["sequence"] == 1
+                    assert len(base64.b64decode(event["pcm16_base64"])) == 4800
+                    break
+            assert seen_caption and seen_audio
+            assert FakeFixedVoiceTts.phrases == ["Hello"]
+            ws.send_json({"type": "stop"})
+
+
+def test_caption_tts_opt_in_required_without_cloud_calls(monkeypatch):
+    monkeypatch.setenv("BT_DEV_GATEWAY_TOKEN", "unit-test-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-provider-key")
+    monkeypatch.setenv("BT_AI_CAPTION_ENGINE", "realtime")
+    monkeypatch.setenv("BT_AI_REALTIME_VOICE", "1")
+    monkeypatch.delenv("BT_AI_CAPTION_TTS_ENABLED", raising=False)
+    with TestClient(app) as client:
+        with client.websocket_connect("/v1/stream") as ws:
+            ws.send_json({
+                "type": "start", "source_mode": "MIC",
+                "source_language": "ta", "target_language": "en",
+                "voice_engine": "caption_tts",
+                "format": "pcm_s16le", "sample_rate_hz": 16000,
+                "channels": 1, "ephemeral_session_token": "unit-test-token",
+            })
+            err = ws.receive_json()
+            assert err["type"] == "error"
+            assert "Caption TTS is disabled" in err["message"]
+
+
+def test_invalid_voice_engine_does_not_start_translation(monkeypatch):
+    monkeypatch.setenv("BT_DEV_GATEWAY_TOKEN", "unit-test-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-provider-key")
+    monkeypatch.setenv("BT_AI_CAPTION_ENGINE", "realtime")
+    with TestClient(app) as client:
+        with client.websocket_connect("/v1/stream") as ws:
+            ws.send_json({
+                "type": "start", "source_mode": "MIC",
+                "source_language": "ta", "target_language": "en",
+                "voice_engine": "unsupported",
+                "format": "pcm_s16le", "sample_rate_hz": 16000,
+                "channels": 1, "ephemeral_session_token": "unit-test-token",
+            })
+            err = ws.receive_json()
+            assert err["type"] == "error"
+            assert "voice engine" in err["message"]
