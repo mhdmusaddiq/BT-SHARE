@@ -9,8 +9,11 @@ import asyncio
 import base64
 import binascii
 import json
+import logging
 import os
 import time
+
+import httpx
 
 from fastapi import WebSocket, WebSocketDisconnect
 from websockets.asyncio.client import connect
@@ -29,6 +32,7 @@ MAX_SESSION_SECONDS = 600
 MAX_CAPTION_CHARS = 1400
 UI_UPDATE_SECONDS = 0.08
 MAX_OUTPUT_DELTA_BYTES = 192_000  # max 4s of audio in one upstream event
+_LOG = logging.getLogger("btshare.gateway.realtime")
 OUTPUT_FRAME_BYTES = 9600  # default: 200ms 24kHz mono PCM16
 # Configurable 100ms output frames for smoother Android jitter buffering.
 # The upstream model's audio format and 200ms microphone frames do not change.
@@ -387,7 +391,14 @@ async def realtime_caption_session(
                     )
                 elif captions in done and not receiver.done():
                     raise RuntimeError("Realtime AI closed unexpectedly")
+    except WebSocketDisconnect:
+        # The phone closed the socket. A single session closing is not a
+        # Python/Uvicorn process crash; keep server available for new sessions.
+        _LOG.info("BT_SHARE_WS session_closed reason=phone_disconnect "
+                  "engine=%s", voice_engine)
     except AudioRelayOverloaded:
+        _LOG.warning("BT_SHARE_WS session_closed reason=audio_backlog "
+                     "engine=%s", voice_engine)
         # Do not silently skip translated words when the caller falls behind.
         if audio_relay is not None:
             await audio_relay.cancel()
@@ -396,10 +407,29 @@ async def realtime_caption_session(
             "Stop and restart this translation session."
         )
     except ProtocolError:
+        _LOG.warning("BT_SHARE_WS session_closed reason=protocol_or_text_backlog "
+                     "engine=%s", voice_engine)
         await _send_safe_error(phone, "Invalid microphone frame or TTS text backlog")
+    except httpx.HTTPStatusError as error:
+        # Only status code, never provider's body, request URL, or speech text.
+        _LOG.warning("BT_SHARE_WS session_closed reason=tts_http_status "
+                     "status=%d engine=%s", error.response.status_code, voice_engine)
+        await _send_safe_error(phone, "Caption TTS API rejected the request "
+                               "(HTTP status %d). Check API access or quota."
+                               % error.response.status_code)
+    except httpx.RequestError as error:
+        _LOG.warning("BT_SHARE_WS session_closed reason=tts_transport "
+                     "error_type=%s engine=%s", type(error).__name__, voice_engine)
+        await _send_safe_error(phone, "Caption TTS connection failed. "
+                               "Check internet connection and restart translation.")
     except (TimeoutError, asyncio.TimeoutError):
+        _LOG.warning("BT_SHARE_WS session_closed reason=upstream_or_tts_timeout "
+                     "engine=%s", voice_engine)
         await _send_safe_error(phone, "Live caption or TTS queue timed out")
-    except Exception:
+    except Exception as error:
+        # Only the safe exception class; no raw request/transcript content.
+        _LOG.warning("BT_SHARE_WS session_closed reason=unexpected "
+                     "error_type=%s engine=%s", type(error).__name__, voice_engine)
         # Preserve the failed session without leaking text, provider responses,
         # keys, or transcripts. Errors remain visible, never silently skipped.
         if tts_worker is not None:
