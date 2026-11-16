@@ -583,3 +583,10 @@ Opt-in realtime audio queue reporting and phone PCM arrival-gap diagnostics
 are documented in [Phase 2.3.4 Audio Queue Diagnostics](docs/phase_2_3_4_audio_queue_diagnostics.md).
 This update measures queued output speech; it does not yet change model voice
 identity, inference latency or Android playback buffering behavior.
+
+## Phase 2.3.5 — 100ms PCM continuity A/B test
+
+A reversible 100ms vs 200ms PCM relay-frame experiment is described in
+[Phase 2.3.5 Continuity Test](docs/phase_2_3_5_audio_continuity_test.md).
+Use a fixed 500ms Flutter startup buffer for controlled real-device testing.
+This is a playback experiment, not a fixed-voice translation engine.

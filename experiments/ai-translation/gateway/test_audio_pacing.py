@@ -148,3 +148,21 @@ async def test_reported_queue_snapshot_excludes_already_sent_chunk():
         "pending_audio_ms": 200,
         "sent_audio_ms": 1000,
     }]
+
+@pytest.mark.asyncio
+async def test_hundred_ms_pcm_frames_are_sent_at_hundred_ms_cadence():
+    clock = Clock()
+    sent = []
+
+    async def send(sequence, pcm):
+        sent.append((sequence, pcm, clock.monotonic()))
+
+    relay = PacedPcmRelay(send, clock=clock.monotonic, sleep=clock.sleep)
+    relay.start()
+    payloads = [bytes([i, i]) * 2400 for i in (1, 2, 3, 4)]
+    for frame in payloads:
+        relay.enqueue(frame)
+    await relay.drain()
+    assert [seq for seq, _, _ in sent] == [1, 2, 3, 4]
+    assert [frame for _, frame, _ in sent] == payloads
+    assert [round(at, 3) for _, _, at in sent] == [0, 0.1, 0.2, 0.3]

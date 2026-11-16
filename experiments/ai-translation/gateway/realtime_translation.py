@@ -31,7 +31,6 @@ MAX_OUTPUT_DELTA_BYTES = 192_000  # max 4s of audio in one upstream event
 OUTPUT_FRAME_BYTES = 9600  # default: 200ms 24kHz mono PCM16
 # Configurable 100ms output frames for smoother Android jitter buffering.
 # The upstream model's audio format and 200ms microphone frames do not change.
-OUTPUT_FRAME_MS_CHOICES = frozenset((100, 200))
 
 
 class LiveCaptionState:
