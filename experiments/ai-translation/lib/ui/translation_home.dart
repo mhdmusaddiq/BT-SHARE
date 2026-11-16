@@ -535,6 +535,7 @@ class _TranslationHomeState extends State<TranslationHome> {
                   'MIC activity (energy heuristic): ${controller.speechActivity.summary}\n'
                   'Startup buffer: ${controller.voice is LiveVoiceBufferInfo ? (controller.voice as LiveVoiceBufferInfo).currentStartupBufferMs : '—'}ms '
                   '(${controller.voice is LiveVoiceBufferInfo && (controller.voice as LiveVoiceBufferInfo).adaptiveStartupEnabled ? 'adaptive' : 'fixed'})\n'
+                  'Voice engine: ${controller.voiceEngine}\n'
                   'Gateway paced audio: ${controller.outputAudioPaced == null ? 'UNKNOWN' : controller.outputAudioPaced! ? 'ON' : 'OFF'}\n'
                   'Gateway pending PCM: ${controller.gatewayPendingAudioMs == null ? '—' : '${controller.gatewayPendingAudioMs}ms'}'
                   ' · Sent PCM: ${controller.gatewaySentAudioMs == null ? '—' : '${controller.gatewaySentAudioMs}ms'}\n'
@@ -596,6 +597,30 @@ class _TranslationHomeState extends State<TranslationHome> {
                   title: const Text('Show live captions'),
                   value: controller.captionsEnabled,
                   onChanged: controller.setCaptionsEnabled,
+                ),
+                const SizedBox(height: 8),
+                const Text('REALTIME VOICE ENGINE', style: _eyebrow),
+                DropdownButtonFormField<String>(
+                  key: ValueKey('voice-engine-${controller.voiceEngine}'),
+                  initialValue: controller.voiceEngine,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    helperText: 'Select before starting. Caption TTS '
+                        'requires gateway opt-in and additional API cost.',
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'direct',
+                      child: Text('Direct AI Voice (existing)'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'caption_tts',
+                      child: Text('Caption → Fixed Voice TTS'),
+                    ),
+                  ],
+                  onChanged: controller.active ? null : (value) {
+                    if (value != null) controller.setVoiceEngine(value);
+                  },
                 ),
                 const Divider(),
                 const ListTile(

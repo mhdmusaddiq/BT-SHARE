@@ -47,6 +47,26 @@ class FakeVoice implements TranslatedVoiceOutput {
 Future<void> flushEvents() => Future<void>.delayed(const Duration(milliseconds: 20));
 
 void main() {
+  test('caption TTS preference is sent before provider connects', () async {
+    final provider = FakeVoiceEngineProvider();
+    final c = TranslationSessionController(
+      microphone: FakeMicrophone(),
+      providerFactory: () => provider,
+      voice: FakeLiveVoice(),
+    );
+    c.setCloudConsentGiven(true);
+    c.setVoiceEngine('caption_tts');
+    expect(c.voiceEngine, 'caption_tts');
+    await c.start();
+    expect(provider.selectedAtConnect, 'caption_tts');
+    c.setVoiceEngine('direct');
+    expect(c.voiceEngine, 'caption_tts');
+    await c.stop();
+    c.setVoiceEngine('direct');
+    expect(c.voiceEngine, 'direct');
+    c.dispose();
+  });
+
   test('phase 2.3.3 audio inter-packet gap records only when clock running',
       () async {
     final metrics = LiveSessionDiagnostics();
@@ -479,6 +499,24 @@ class StreamingProgressProvider extends ProgressProvider
   Future<void> close() async {
     await _pcm.close();
     await super.close();
+  }
+}
+
+class FakeVoiceEngineProvider extends StreamingProgressProvider
+    implements GatewayVoiceEngineSelection {
+  String selected = 'direct';
+  String? selectedAtConnect;
+
+  @override
+  void selectVoiceEngine(String engine) => selected = engine;
+
+  @override
+  Future<void> connect({
+    required TranslationLanguage source,
+    required TranslationLanguage target,
+  }) async {
+    selectedAtConnect = selected;
+    await super.connect(source: source, target: target);
   }
 }
 

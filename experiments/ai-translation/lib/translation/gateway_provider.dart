@@ -11,7 +11,8 @@ import 'translation_provider.dart';
 /// remain on the gateway server, never inside the Flutter application.
 class GatewayTranslationProvider
     implements TranslationProvider, StreamingTranslationProvider,
-        GatewayAudioPacingInfo, GatewayAudioQueueInfo {
+        GatewayAudioPacingInfo, GatewayAudioQueueInfo,
+        GatewayVoiceEngineSelection {
   GatewayTranslationProvider({
     required this.endpoint,
     this.ephemeralSessionToken = '',
@@ -38,7 +39,17 @@ class GatewayTranslationProvider
   int _sequence = 0;
   bool _captionOnly = false;
   bool _streamingAudio = false;
+  String _voiceEngine = 'direct';
   bool? _outputAudioPaced;
+
+  @override
+  void selectVoiceEngine(String engine) {
+    if (engine != 'direct' && engine != 'caption_tts') {
+      throw ArgumentError.value(engine, 'engine', 'Unsupported voice engine');
+    }
+    if (_connected) throw StateError('Voice mode is locked during a session');
+    _voiceEngine = engine;
+  }
   int _audioSequence = 0;
 
   @override
@@ -127,6 +138,7 @@ class GatewayTranslationProvider
         'format': 'pcm_s16le',
         'sample_rate_hz': 16000,
         'channels': 1,
+        'voice_engine': _voiceEngine,
         if (ephemeralSessionToken.isNotEmpty)
           'ephemeral_session_token': ephemeralSessionToken,
       }));

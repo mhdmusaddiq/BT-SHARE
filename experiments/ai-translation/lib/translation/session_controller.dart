@@ -124,6 +124,7 @@ class TranslationSessionController extends ChangeNotifier {
   bool voiceEnabled = true;
   bool captionsEnabled = true;
   bool autoSpeak = false;
+  String voiceEngine = 'direct';
   bool cloudConsentGiven = false;
   bool mockMode;
   String? errorMessage;
@@ -216,6 +217,12 @@ class TranslationSessionController extends ChangeNotifier {
     _notify();
   }
 
+  void setVoiceEngine(String engine) {
+    if (active || (engine != 'direct' && engine != 'caption_tts')) return;
+    voiceEngine = engine;
+    _notify();
+  }
+
   void setCloudConsentGiven(bool enabled) {
     if (active) return;
     cloudConsentGiven = enabled;
@@ -269,6 +276,11 @@ class TranslationSessionController extends ChangeNotifier {
       final provider = providerFactory();
       _provider = provider;
       mockMode = provider.isMock;
+      final GatewayVoiceEngineSelection? engineConfig = switch (provider) {
+        GatewayVoiceEngineSelection selection => selection,
+        _ => null,
+      };
+      engineConfig?.selectVoiceEngine(voiceEngine);
       _segmentSubscription = provider.segments.listen(
         (segment) {
           if (!_current(run)) return;

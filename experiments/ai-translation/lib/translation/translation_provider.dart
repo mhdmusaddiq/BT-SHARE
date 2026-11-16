@@ -17,6 +17,11 @@ abstract class TranslationProvider {
   Future<void> close();
 }
 
+/// Optional gateway-session voice selection.
+abstract class GatewayVoiceEngineSelection {
+  void selectVoiceEngine(String engine);
+}
+
 /// Optional diagnostics advertised by the gateway's ready handshake.
 /// A missing field means an old gateway and must remain UNKNOWN, not OFF.
 abstract class GatewayAudioPacingInfo {
