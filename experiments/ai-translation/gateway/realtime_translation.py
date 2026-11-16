@@ -207,7 +207,8 @@ async def realtime_caption_session(
                     send_pcm,
                     paced=paced_audio,
                     # Keep a fixed 12s bounded queue in both 100/200ms modes.
-                    max_frames=12000 // output_frame_ms,
+                    max_frames=120 if voice_engine == "caption_tts"
+                        else 12000 // output_frame_ms,
                     on_progress=send_audio_metrics,
                 )
                 audio_relay.start()
@@ -231,7 +232,10 @@ async def realtime_caption_session(
                 "caption_only": not streaming_voice,
                 "streaming_audio": streaming_voice,
                 "audio_sample_rate_hz": 24000 if streaming_voice else None,
-                "audio_frame_ms": output_frame_ms if streaming_voice else 200,
+                "audio_frame_ms": (
+                    100 if voice_engine == "caption_tts"
+                    else output_frame_ms if streaming_voice else 200
+                ),
                 "output_audio_paced": streaming_voice and paced_audio,
                 "voice_engine": voice_engine if streaming_voice else "off",
             })
@@ -393,7 +397,9 @@ async def realtime_caption_session(
         )
     except ProtocolError:
         await _send_safe_error(phone, "Invalid microphone frame or TTS text backlog")
-    except Exception as exc:
+    except (TimeoutError, asyncio.TimeoutError):
+        await _send_safe_error(phone, "Live caption or TTS queue timed out")
+    except Exception:
         # Preserve the failed session without leaking text, provider responses,
         # keys, or transcripts. Errors remain visible, never silently skipped.
         if tts_worker is not None:
@@ -407,8 +413,6 @@ async def realtime_caption_session(
                 "quota or hotspot; use segmented fallback."
             )
         return
-    except (TimeoutError, asyncio.TimeoutError):
-        await _send_safe_error(phone, "Live caption service timed out")
     finally:
         if tts_worker is not None:
             await tts_worker.cancel()
