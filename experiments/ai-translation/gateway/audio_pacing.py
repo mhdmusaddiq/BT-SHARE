@@ -127,7 +127,9 @@ class PacedPcmRelay:
             return
         if not self._closed:
             self._closed = True
-            await self._queue.put(None)
+            if self._task.done():
+                await self._task  # Preserve a failed sender instead of hanging.
+            await asyncio.wait_for(self._queue.put(None), timeout=timeout)
         await asyncio.wait_for(self._task, timeout=timeout)
 
     async def cancel(self) -> None:
