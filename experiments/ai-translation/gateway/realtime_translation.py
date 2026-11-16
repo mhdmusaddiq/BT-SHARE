@@ -17,6 +17,7 @@ from websockets.asyncio.client import connect
 
 from .audio import Pcm16To24
 from .audio_pacing import AudioRelayOverloaded, PacedPcmRelay
+from .caption_tts import CaptionPhraseAccumulator, StreamingCaptionTts
 from .diagnostics import RealtimeGatewayMetrics
 from .protocol import ProtocolError, decode_frame
 
@@ -87,11 +88,23 @@ async def realtime_caption_session(
     key: str,
     source: str,
     target: str,
+    voice_engine: str = "direct",
 ) -> None:
     """Called only after the existing MIC-only token and start validation."""
     receiver = None
     captions = None
     audio_relay = None
+    tts_worker = None
+    tts_phrases = None
+    if voice_engine not in ("direct", "caption_tts"):
+        await _send_safe_error(phone, "Invalid realtime voice mode")
+        await phone.close(code=1008)
+        return
+    if (voice_engine == "caption_tts"
+            and os.getenv("BT_AI_CAPTION_TTS_ENABLED", "0") != "1"):
+        await _send_safe_error(phone, "Caption TTS is disabled on gateway")
+        await phone.close(code=1008)
+        return
     # Opt-in per Python gateway process. Default remains proven caption-only.
     voice_flag = os.getenv("BT_AI_REALTIME_VOICE", "0").lower()
     if voice_flag not in ("0", "1"):
@@ -99,6 +112,10 @@ async def realtime_caption_session(
         await phone.close(code=1011)
         return
     streaming_voice = voice_flag == "1"
+    if voice_engine == "caption_tts" and not streaming_voice:
+        await _send_safe_error(phone, "Enable realtime voice for caption TTS")
+        await phone.close(code=1011)
+        return
     pace_flag = os.getenv("BT_AI_PACE_OUTPUT_AUDIO", "1").lower()
     if pace_flag not in ("0", "1"):
         await _send_safe_error(phone, "Invalid BT_AI_PACE_OUTPUT_AUDIO; use 0 or 1")
@@ -194,6 +211,15 @@ async def realtime_caption_session(
                     on_progress=send_audio_metrics,
                 )
                 audio_relay.start()
+                if voice_engine == "caption_tts":
+                    # One serial generator per session = consistent voice,
+                    # bounded request queue and no overlapping utterances.
+                    tts_phrases = CaptionPhraseAccumulator()
+                    tts_worker = StreamingCaptionTts(
+                        key=key, language=target, voice="alloy",
+                        send_pcm=audio_relay.enqueue_wait,
+                    )
+                    tts_worker.start()
 
             await send_locked({
                 "type": "ready",
@@ -207,6 +233,7 @@ async def realtime_caption_session(
                 "audio_sample_rate_hz": 24000 if streaming_voice else None,
                 "audio_frame_ms": output_frame_ms if streaming_voice else 200,
                 "output_audio_paced": streaming_voice and paced_audio,
+                "voice_engine": voice_engine if streaming_voice else "off",
             })
 
             async def microphone_to_upstream() -> None:
@@ -257,6 +284,12 @@ async def realtime_caption_session(
                         max(0, UI_UPDATE_SECONDS - (time.monotonic() - last_emit))
                         if state.dirty else None
                     )
+                    if tts_worker is not None:
+                        tts_worker.check()
+                        # Wake periodically even when model has gone silent:
+                        # commit the last caption phrase without waiting for
+                        # a new transcript event or session.close.
+                        wait = min(wait, 0.2) if wait is not None else 0.2
                     try:
                         raw = (
                             await asyncio.wait_for(upstream.recv(), timeout=wait)
@@ -267,6 +300,10 @@ async def realtime_caption_session(
                             await send_locked(state.payload(last_audio_ms))
                             state.dirty = False
                             last_emit = time.monotonic()
+                        if tts_phrases is not None and tts_worker is not None:
+                            for phrase in tts_phrases.flush_idle():
+                                tts_worker.submit(phrase)
+                            tts_worker.check()
                         continue
                     if len(raw) > 2_000_000:
                         raise ProtocolError("Oversized realtime event")
@@ -279,15 +316,21 @@ async def realtime_caption_session(
                     if kind == "session.closed":
                         if state.dirty:
                             await send_locked(state.payload(last_audio_ms))
+                        if tts_phrases is not None and tts_worker is not None:
+                            for phrase in tts_phrases.finish():
+                                tts_worker.submit(phrase)
+                            # Finish every queued phrase before finishing PCM;
+                            # fail explicitly on timeout; no hidden word loss.
+                            await tts_worker.finish(timeout=50)
                         if audio_relay is not None:
                             # Drain queued speech on graceful upstream close.
-                            # The 12s queue is bounded; 14s permits normal
-                            # output pacing without dropping samples.
                             await audio_relay.drain()
                         return
                     if kind == "session.output_audio.delta":
-                        if not streaming_voice:
-                            continue  # Phase 1 caption-only preserves old path
+                        if not streaming_voice or voice_engine == "caption_tts":
+                            # In TTS mode the provider audio is ignored:
+                            # never double-play two independent voice streams.
+                            continue
                         if (event.get("sample_rate", 24000) != 24000
                                 or event.get("channels", 1) != 1
                                 or event.get("format", "pcm16") != "pcm16"):
@@ -313,6 +356,9 @@ async def realtime_caption_session(
                     if state.accept(kind, event.get("delta")):
                         if kind == "session.output_transcript.delta":
                             metrics.mark("provider_first_target_caption")
+                            if tts_phrases is not None and tts_worker is not None:
+                                for phrase in tts_phrases.add(event["delta"]):
+                                    tts_worker.submit(phrase)
                         if type(event.get("elapsed_ms")) is int:
                             last_audio_ms = event["elapsed_ms"]
                         if time.monotonic() - last_emit >= UI_UPDATE_SECONDS:
@@ -332,7 +378,9 @@ async def realtime_caption_session(
                 if receiver in done and not captions.done():
                     # Flush on stop, bounded so a provider cannot hold
                     # the mic session open forever.
-                    await asyncio.wait_for(captions, timeout=16)
+                    await asyncio.wait_for(
+                        captions, timeout=70 if tts_worker is not None else 16
+                    )
                 elif captions in done and not receiver.done():
                     raise RuntimeError("Realtime AI closed unexpectedly")
     except AudioRelayOverloaded:
@@ -344,17 +392,26 @@ async def realtime_caption_session(
             "Stop and restart this translation session."
         )
     except ProtocolError:
-        await _send_safe_error(phone, "Invalid microphone frame or live caption event")
+        await _send_safe_error(phone, "Invalid microphone frame or TTS text backlog")
+    except Exception as exc:
+        # Preserve the failed session without leaking text, provider responses,
+        # keys, or transcripts. Errors remain visible, never silently skipped.
+        if tts_worker is not None:
+            await _send_safe_error(
+                phone, "Streaming caption voice failed. Check TTS model "
+                "access, quota and connection; restart the session."
+            )
+        else:
+            await _send_safe_error(
+                phone, "Live captions unavailable. Check realtime model access, "
+                "quota or hotspot; use segmented fallback."
+            )
+        return
     except (TimeoutError, asyncio.TimeoutError):
         await _send_safe_error(phone, "Live caption service timed out")
-    except Exception:
-        # No untrusted provider messages, audio or secrets in client errors.
-        await _send_safe_error(
-            phone,
-            "Live captions unavailable. Check realtime model access, "
-            "quota or hotspot; use segmented fallback.",
-        )
     finally:
+        if tts_worker is not None:
+            await tts_worker.cancel()
         if audio_relay is not None:
             await audio_relay.cancel()
         for task in (receiver, captions):

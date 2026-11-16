@@ -240,8 +240,14 @@ async def translate_socket(mobile: WebSocket):
         await mobile.close(code=1011)
         return
     if caption_engine == "realtime":
+        voice_engine = start.get("voice_engine", "direct")
+        if voice_engine not in ("direct", "caption_tts"):
+            await send_error(mobile, "Invalid realtime voice engine")
+            await mobile.close(code=1008)
+            return
         await realtime_caption_session(
-            mobile, key=key, source=source, target=target
+            mobile, key=key, source=source, target=target,
+            voice_engine=voice_engine,
         )
         return
 
