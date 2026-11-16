@@ -324,3 +324,63 @@ def test_pcm_burst_paces_without_blocking_live_caption(monkeypatch):
                 for e in seen[:-1]
             ), "Captions should arrive before the last 200ms output frame"
             ws.send_json({"type": "stop"})
+
+def test_realtime_100ms_output_frames_preserve_every_pcm_byte(monkeypatch):
+    """No dropped/duplicated PCM even when the upstream delta is a burst."""
+    monkeypatch.setenv("BT_DEV_GATEWAY_TOKEN", "unit-test-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-provider-key")
+    monkeypatch.setenv("BT_AI_CAPTION_ENGINE", "realtime")
+    monkeypatch.setenv("BT_AI_REALTIME_VOICE", "1")
+    monkeypatch.setenv("BT_AI_PACE_OUTPUT_AUDIO", "1")
+    monkeypatch.setenv("BT_AI_OUTPUT_FRAME_MS", "100")
+    fake = FakeRealtimeWithAudio()
+    monkeypatch.setattr(realtime, "connect", lambda *a, **k: fake)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/v1/stream") as ws:
+            ws.send_json({
+                "type": "start", "source_mode": "MIC",
+                "source_language": "ta", "target_language": "en",
+                "format": "pcm_s16le", "sample_rate_hz": 16000,
+                "channels": 1, "ephemeral_session_token": "unit-test-token",
+            })
+            ready = ws.receive_json()
+            assert ready["audio_frame_ms"] == 100
+            assert ready["output_audio_paced"] is True
+            mic = array("h", [1000] * 1600).tobytes()
+            for seq in (1, 2, 3):
+                ws.send_json({
+                    "type": "audio", "source_mode": "MIC",
+                    "sequence": seq,
+                    "pcm16_base64": base64.b64encode(mic).decode("ascii"),
+                })
+            events = []
+            for _ in range(12):
+                item = ws.receive_json()
+                events.append(item)
+                if sum(e.get("type") == "audio_delta" for e in events) == 4:
+                    break
+            frames = [e for e in events if e.get("type") == "audio_delta"]
+            assert [e["sequence"] for e in frames] == [1, 2, 3, 4]
+            assert [len(base64.b64decode(e["pcm16_base64"])) for e in frames] == [4800] * 4
+            assert sum(len(base64.b64decode(e["pcm16_base64"])) for e in frames) == 19200
+            ws.send_json({"type": "stop"})
+
+
+def test_invalid_output_audio_frame_size_is_rejected_before_cloud(monkeypatch):
+    monkeypatch.setenv("BT_DEV_GATEWAY_TOKEN", "unit-test-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-provider-key")
+    monkeypatch.setenv("BT_AI_CAPTION_ENGINE", "realtime")
+    monkeypatch.setenv("BT_AI_REALTIME_VOICE", "1")
+    monkeypatch.setenv("BT_AI_OUTPUT_FRAME_MS", "65")
+    with TestClient(app) as client:
+        with client.websocket_connect("/v1/stream") as ws:
+            ws.send_json({
+                "type": "start", "source_mode": "MIC",
+                "source_language": "ta", "target_language": "en",
+                "format": "pcm_s16le", "sample_rate_hz": 16000,
+                "channels": 1, "ephemeral_session_token": "unit-test-token",
+            })
+            error = ws.receive_json()
+            assert error["type"] == "error"
+            assert "BT_AI_OUTPUT_FRAME_MS" in error["message"]

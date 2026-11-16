@@ -28,7 +28,10 @@ MAX_SESSION_SECONDS = 600
 MAX_CAPTION_CHARS = 1400
 UI_UPDATE_SECONDS = 0.08
 MAX_OUTPUT_DELTA_BYTES = 192_000  # max 4s of audio in one upstream event
-OUTPUT_FRAME_BYTES = 9600  # relay 200ms PCM16 chunks, prevent huge phone JSON
+OUTPUT_FRAME_BYTES = 9600  # default: 200ms 24kHz mono PCM16
+# Configurable 100ms output frames for smoother Android jitter buffering.
+# The upstream model's audio format and 200ms microphone frames do not change.
+OUTPUT_FRAME_MS_CHOICES = frozenset((100, 200))
 
 
 class LiveCaptionState:
@@ -103,6 +106,15 @@ async def realtime_caption_session(
         await phone.close(code=1011)
         return
     paced_audio = pace_flag == "1"
+    output_frame_ms_flag = os.getenv("BT_AI_OUTPUT_FRAME_MS", "200")
+    if output_frame_ms_flag not in ("100", "200"):
+        await _send_safe_error(
+            phone, "Invalid BT_AI_OUTPUT_FRAME_MS; use 100 or 200"
+        )
+        await phone.close(code=1011)
+        return
+    output_frame_ms = int(output_frame_ms_flag)
+    output_frame_bytes = output_frame_ms * 48  # 24kHz mono PCM16
     metrics = RealtimeGatewayMetrics(
         enabled=os.getenv("BT_AI_DIAGNOSTICS", "0") == "1"
     )
@@ -176,7 +188,10 @@ async def realtime_caption_session(
                     })
 
                 audio_relay = PacedPcmRelay(
-                    send_pcm, paced=paced_audio,
+                    send_pcm,
+                    paced=paced_audio,
+                    # Keep a fixed 12s bounded queue in both 100/200ms modes.
+                    max_frames=12000 // output_frame_ms,
                     on_progress=send_audio_metrics,
                 )
                 audio_relay.start()
@@ -191,7 +206,7 @@ async def realtime_caption_session(
                 "caption_only": not streaming_voice,
                 "streaming_audio": streaming_voice,
                 "audio_sample_rate_hz": 24000 if streaming_voice else None,
-                "audio_frame_ms": 200,
+                "audio_frame_ms": output_frame_ms if streaming_voice else 200,
                 "output_audio_paced": streaming_voice and paced_audio,
             })
 
@@ -290,8 +305,8 @@ async def realtime_caption_session(
                         metrics.mark("provider_first_audio")
                         # Never await playback-time pacing in the upstream
                         # receive loop: captions must not wait for PCM output.
-                        for offset in range(0, len(pcm), OUTPUT_FRAME_BYTES):
-                            chunk = pcm[offset:offset + OUTPUT_FRAME_BYTES]
+                        for offset in range(0, len(pcm), output_frame_bytes):
+                            chunk = pcm[offset:offset + output_frame_bytes]
                             if audio_relay is None:
                                 raise ProtocolError("PCM relay unavailable")
                             audio_relay.enqueue(chunk)
