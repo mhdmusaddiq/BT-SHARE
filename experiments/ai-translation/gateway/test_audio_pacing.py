@@ -166,3 +166,19 @@ async def test_hundred_ms_pcm_frames_are_sent_at_hundred_ms_cadence():
     assert [seq for seq, _, _ in sent] == [1, 2, 3, 4]
     assert [frame for _, frame, _ in sent] == payloads
     assert [round(at, 3) for _, _, at in sent] == [0, 0.1, 0.2, 0.3]
+
+
+@pytest.mark.asyncio
+async def test_backpressured_enqueue_wait_preserves_every_frame():
+    seen = []
+    async def send(sequence, pcm):
+        seen.append((sequence, pcm))
+        await asyncio.sleep(0)
+    relay = PacedPcmRelay(send, max_frames=1, paced=False)
+    relay.start()
+    payloads = [bytes([n, n]) * 2400 for n in range(1, 8)]
+    for pcm in payloads:
+        await relay.enqueue_wait(pcm)
+    await relay.drain()
+    assert [p for _, p in seen] == payloads
+    assert relay.pending_audio_ms == 0

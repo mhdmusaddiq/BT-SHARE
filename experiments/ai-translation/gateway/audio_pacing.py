@@ -84,6 +84,21 @@ class PacedPcmRelay:
         except asyncio.QueueFull as exc:
             raise AudioRelayOverloaded("Generated audio exceeds PCM queue cap") from exc
 
+    async def enqueue_wait(self, pcm: bytes, *, timeout: float = 12) -> None:
+        """Backpressure TTS producer; never discard an accepted speech frame."""
+        if not pcm or len(pcm) % 2:
+            raise ProtocolError("Invalid PCM relay frame")
+        if self._closed or self._task is None:
+            raise ProtocolError("PCM relay not running")
+        if self._task.done():
+            self._task.result()
+            raise ProtocolError("PCM relay stopped unexpectedly")
+        try:
+            await asyncio.wait_for(self._queue.put(pcm), timeout=timeout)
+        except asyncio.TimeoutError as exc:
+            raise AudioRelayOverloaded("PCM relay timed out under load") from exc
+        self._generated_bytes += len(pcm)
+
     async def _run(self) -> None:
         due: float | None = None
         while True:
