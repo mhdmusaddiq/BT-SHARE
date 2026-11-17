@@ -78,8 +78,22 @@ class CaptionPhraseAccumulator:
         return [phrase] if phrase else []
 
 
+class _PrefetchedPhrase:
+    """Only the next 1.2 seconds of synthesized PCM can buffer per phrase."""
+
+    def __init__(self):
+        self.frames: asyncio.Queue[bytes | BaseException | None] = (
+            asyncio.Queue(maxsize=12)
+        )
+
+
 class StreamingCaptionTts:
-    """Serial TTS worker and bounded text queue; never reorder or skip text."""
+    """Two-request TTS prefetch with strictly ordered, bounded PCM playback.
+
+    Synthesize the upcoming phrase while the previous phrase is played.
+    The playback task drains one phrase completely before the next, so audio
+    is never interleaved even if HTTP responses complete out of order.
+    """
 
     def __init__(
         self,
@@ -95,6 +109,7 @@ class StreamingCaptionTts:
         if voice not in ("alloy", "coral", "marin", "cedar"):
             raise ValueError("Unsupported fixed TTS voice")
         self._voice = voice
+        self._language = language
         self._send_pcm = send_pcm
         self._client = client or httpx.AsyncClient(
             base_url="https://api.openai.com/v1",
@@ -102,8 +117,13 @@ class StreamingCaptionTts:
             timeout=httpx.Timeout(15.0, read=35.0),
         )
         self._owns_client = client is None
-        self._language = language
-        self._queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=12)
+        # At most 12 submitted phrases pending consumption. Each prefetch
+        # buffers at most 12 x 100ms PCM frames, never unbounded audio.
+        self._queue: asyncio.Queue[_PrefetchedPhrase | None] = (
+            asyncio.Queue(maxsize=12)
+        )
+        self._prefetch_limit = asyncio.Semaphore(2)
+        self._producers: set[asyncio.Task[None]] = set()
         self._task: asyncio.Task[None] | None = None
         self._closing = False
 
@@ -115,29 +135,52 @@ class StreamingCaptionTts:
     def submit(self, phrase: str) -> None:
         if not phrase or len(phrase) > 600 or self._closing or self._task is None:
             raise ProtocolError("Invalid caption phrase")
-        if self._task.done():
-            self._task.result()
-            raise ProtocolError("TTS voice worker stopped")
+        self.check()
+        state = _PrefetchedPhrase()
         try:
-            self._queue.put_nowait(phrase)
+            self._queue.put_nowait(state)
         except asyncio.QueueFull as exc:
             raise ProtocolError("TTS text backlog full") from exc
+        producer = asyncio.create_task(self._prepare(phrase, state))
+        self._producers.add(producer)
+        producer.add_done_callback(self._producers.discard)
 
     def check(self) -> None:
         if self._task is not None and self._task.done():
             self._task.result()
 
+    async def _prepare(self, phrase: str, state: _PrefetchedPhrase) -> None:
+        try:
+            async with self._prefetch_limit:
+                await self._speak(phrase, state.frames.put)
+        except Exception as error:
+            # Preserve failure as data only inside this private worker queue;
+            # surface it at the correct phrase position, never skip a phrase.
+            await state.frames.put(error)
+        await state.frames.put(None)
+
     async def _run(self) -> None:
         while True:
-            phrase = await self._queue.get()
-            if phrase is None:
+            state = await self._queue.get()
+            if state is None:
                 return
-            await self._speak(phrase)
+            while True:
+                frame = await state.frames.get()
+                if frame is None:
+                    break
+                if isinstance(frame, BaseException):
+                    raise frame
+                await self._send_pcm(frame)
 
-    async def _speak(self, phrase: str) -> None:
-        prompt = ("Speak the text exactly, with a consistent calm voice. "
-                  "Do not add words or introductions. Use natural pacing.")
-        # PCM is explicitly 24kHz, mono, 16-bit LE (no WAV header).
+    async def _speak(
+        self,
+        phrase: str,
+        deliver: Callable[[bytes], Awaitable[None]],
+    ) -> None:
+        prompt = (
+            "Speak the text exactly, with a consistent calm voice. "
+            "Do not add words or introductions. Use natural pacing."
+        )
         pcm = bytearray()
         total = 0
         async with self._client.stream(
@@ -155,17 +198,17 @@ class StreamingCaptionTts:
             response.raise_for_status()
             async for chunk in response.aiter_bytes():
                 total += len(chunk)
-                if total > 2_400_000:  # 50 seconds of PCM, per phrase.
+                if total > 2_400_000:  # 50 seconds of PCM per phrase.
                     raise ProtocolError("TTS PCM response exceeds safe limit")
                 pcm.extend(chunk)
                 while len(pcm) >= _PCM_FRAME_BYTES:
                     frame = bytes(pcm[:_PCM_FRAME_BYTES])
                     del pcm[:_PCM_FRAME_BYTES]
-                    await self._send_pcm(frame)
+                    await deliver(frame)
         if total == 0 or len(pcm) % 2:
             raise ProtocolError("TTS supplied empty or invalid PCM16")
         if pcm:
-            await self._send_pcm(bytes(pcm))
+            await deliver(bytes(pcm))
 
     async def finish(self, *, timeout: float = 45) -> None:
         if self._task is None:
@@ -180,7 +223,12 @@ class StreamingCaptionTts:
         self._closing = True
         if self._task is not None and not self._task.done():
             self._task.cancel()
-        if self._task is not None:
-            await asyncio.gather(self._task, return_exceptions=True)
+        for producer in tuple(self._producers):
+            if not producer.done():
+                producer.cancel()
+        await asyncio.gather(
+            *(task for task in (self._task, *self._producers) if task is not None),
+            return_exceptions=True,
+        )
         if self._owns_client:
             await self._client.aclose()
