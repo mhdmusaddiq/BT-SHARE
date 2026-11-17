@@ -211,3 +211,48 @@ async def test_prefetched_http_chunks_keep_pcm_sample_order():
     assert all(0 < len(frame) <= 4800 and len(frame) % 2 == 0
                for frame in frames)
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_prefetch_can_be_rolled_back_to_serial_requests(monkeypatch):
+    """Voice-only A/B switch: parallel=1 avoids concurrent TTS calls."""
+    import json
+    monkeypatch.setenv("BT_AI_TTS_PREFETCH_PARALLEL", "1")
+    first_done = asyncio.Event()
+    started = []
+    audio = []
+
+    async def mock_send(request):
+        text = json.loads(request.content)["input"]
+        started.append(text)
+        if text == "first":
+            await first_done.wait()
+        return httpx.Response(200, content=bytes([1, 0]) * 2400)
+
+    client = httpx.AsyncClient(
+        base_url="https://api.openai.com/v1",
+        transport=httpx.MockTransport(mock_send),
+    )
+    worker = StreamingCaptionTts(
+        key="fake", language="en",
+        send_pcm=lambda frame: _append_frame(audio, frame),
+        client=client,
+    )
+    worker.start()
+    worker.submit("first")
+    worker.submit("second")
+    await asyncio.sleep(0.02)
+    assert started == ["first"]
+    first_done.set()
+    await worker.finish(timeout=4)
+    assert started == ["first", "second"]
+    assert len(b"".join(audio)) == 9600
+    await client.aclose()
+
+
+def test_invalid_prefetch_parallelism_is_rejected_before_cloud(monkeypatch):
+    monkeypatch.setenv("BT_AI_TTS_PREFETCH_PARALLEL", "900")
+    with pytest.raises(ValueError, match="BT_AI_TTS_PREFETCH_PARALLEL"):
+        StreamingCaptionTts(
+            key="fake", language="en", send_pcm=lambda frame: asyncio.sleep(0),
+        )

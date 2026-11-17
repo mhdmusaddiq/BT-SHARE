@@ -602,3 +602,20 @@ mixes provider-generated direct audio with caption-driven PCM.
 
 See [Phase 2.4 Caption-to-TTS Setup](docs/phase_2_4_caption_to_tts.md)
 for the detailed architecture, setup, rollback and A/B test plan.
+
+## Phase 2.5 — Voice-only TTS prefetch (frozen captions preserved)
+
+Caption-to-Fixed-Voice TTS now overlaps synthesis of the next phrase with
+playback of the current phrase. Up to two TTS requests can run concurrently
+while PCM packets are sent in original phrase order. The voice mode remains
+opt-in, and Direct AI Voice remains unchanged. No frozen original/translated
+caption components were edited.
+
+Set `BT_AI_TTS_PREFETCH_PARALLEL=2` on the Python server (default).
+For serial rollback / A-B testing set `BT_AI_TTS_PREFETCH_PARALLEL=1` and
+restart Uvicorn. Running two concurrent TTS requests may increase pressure
+on the Speech API rate limit; this feature does not guarantee a particular
+latency or uninterrupted Android playback.
+
+See [Phase 2.5 voice prefetch](docs/phase_2_5_tts_prefetch.md) and the
+[Frozen caption contract](docs/CAPTION_BASELINE_FROZEN.md).
