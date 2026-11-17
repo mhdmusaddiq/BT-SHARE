@@ -5,6 +5,7 @@ synthesized with a fixed voice, one phrase at a time, and delivered as 24kHz
 mono signed little-endian PCM16. No transcripts/audio are persisted or logged.
 """
 import asyncio
+import os
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -122,7 +123,10 @@ class StreamingCaptionTts:
         self._queue: asyncio.Queue[_PrefetchedPhrase | None] = (
             asyncio.Queue(maxsize=12)
         )
-        self._prefetch_limit = asyncio.Semaphore(2)
+        parallel = os.getenv("BT_AI_TTS_PREFETCH_PARALLEL", "2")
+        if parallel not in ("1", "2"):
+            raise ValueError("BT_AI_TTS_PREFETCH_PARALLEL must be 1 or 2")
+        self._prefetch_limit = asyncio.Semaphore(int(parallel))
         self._producers: set[asyncio.Task[None]] = set()
         self._task: asyncio.Task[None] | None = None
         self._closing = False
